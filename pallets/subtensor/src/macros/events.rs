@@ -459,6 +459,24 @@ mod events {
             coldkey: T::AccountId,
         },
 
+        /// Airdrop emissions have been claimed for a coldkey on all subnets and hotkeys.
+        /// Parameters:
+        /// (coldkey)
+        AirdropClaimed {
+            /// Claim coldkey
+            coldkey: T::AccountId,
+        },
+
+        /// Airdrop opt-in status for a coldkey has been set.
+        /// Parameters:
+        /// (coldkey, opt_in)
+        AirdropOptInSet {
+            /// Coldkey
+            coldkey: T::AccountId,
+            /// Opt-in status (true = opted-in, false = opted-out)
+            opt_in: bool,
+        },
+
         /// Root claim type for a coldkey has been set.
         /// Parameters:
         /// (coldkey, u8)

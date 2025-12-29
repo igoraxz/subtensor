@@ -73,6 +73,15 @@ impl<T: Config> Pallet<T> {
         // 9. Perform the actual coldkey swap
         let _ = Self::perform_swap_coldkey(old_coldkey, new_coldkey, &mut weight);
 
+        // 9.1. Migrate airdrop opt-in status from old_coldkey to new_coldkey
+        // Note: No need to update RootAirdropOptedInTaoStake counters since stake stays on same hotkey
+        let opt_in_status = AirdropOptIn::<T>::get(old_coldkey);
+        if opt_in_status {
+            AirdropOptIn::<T>::insert(new_coldkey, true);
+        }
+        AirdropOptIn::<T>::remove(old_coldkey);
+        weight.saturating_accrue(T::DbWeight::get().reads_writes(1, 2));
+
         // 10. Update the last transaction block for the new coldkey
         Self::set_last_tx_block(new_coldkey, Self::get_current_block_as_u64());
         weight.saturating_accrue(T::DbWeight::get().writes(1));
@@ -191,6 +200,15 @@ impl<T: Config> Pallet<T> {
 
                 if new_alpha.saturating_add(old_alpha) > U64F64::from(0u64) {
                     Self::transfer_root_claimed_for_new_keys(
+                        netuid,
+                        &hotkey,
+                        &hotkey,
+                        old_coldkey,
+                        new_coldkey,
+                    );
+
+                    // Transfer airdrop claimed for this coldkey (same as root claimed)
+                    Self::transfer_airdrop_claimed_for_new_keys(
                         netuid,
                         &hotkey,
                         &hotkey,

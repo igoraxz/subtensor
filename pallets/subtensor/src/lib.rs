@@ -2265,6 +2265,59 @@ pub mod pallet {
     #[pallet::storage] // --- Value --> num_root_claim | Number of coldkeys to claim each auto-claim.
     pub type NumRootClaim<T: Config> = StorageValue<_, u64, ValueQuery, DefaultNumRootClaim<T>>;
 
+    /// ============================
+    /// ==== Airdrop Storage =====
+    /// ============================
+    /// --- MAP ( netuid ) --> pending_airdrop_alpha | Pending airdrop alpha per subnet.
+    #[pallet::storage]
+    pub type PendingAirdropAlpha<T> =
+        StorageMap<_, Identity, NetUid, AlphaCurrency, ValueQuery, DefaultZeroAlpha<T>>;
+
+    /// --- MAP ( hot ) --> MAP(netuid ) --> claimable_airdrop | Airdrop claimable dividends per hotkey per subnet.
+    #[pallet::storage]
+    pub type AirdropClaimable<T: Config> = StorageMap<
+        _,
+        Blake2_128Concat,
+        T::AccountId,
+        BTreeMap<NetUid, I96F32>,
+        ValueQuery,
+        DefaultRootClaimable<T>,
+    >;
+
+    /// Already claimed airdrop alpha per (netuid, hotkey, coldkey).
+    #[pallet::storage]
+    pub type AirdropClaimed<T: Config> = StorageNMap<
+        _,
+        (
+            NMapKey<Identity, NetUid>,               // subnet
+            NMapKey<Blake2_128Concat, T::AccountId>, // hotkey
+            NMapKey<Blake2_128Concat, T::AccountId>, // coldkey
+        ),
+        u128,
+        ValueQuery,
+    >;
+
+    /// --- MAP ( coldkey ) --> opt_in | Whether coldkey has opted in to receive airdrops (default: false/opted-out).
+    #[pallet::storage]
+    pub type AirdropOptIn<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, bool, ValueQuery, DefaultFalse<T>>;
+
+    /// --- Value --> num_airdrop_claim | Number of coldkeys to claim each auto-claim for airdrops.
+    #[pallet::storage]
+    pub type NumAirdropClaim<T: Config> = StorageValue<_, u64, ValueQuery, DefaultNumRootClaim<T>>;
+
+    /// --- MAP(netuid ) --> Airdrop claim threshold
+    #[pallet::storage]
+    pub type AirdropClaimableThreshold<T: Config> =
+        StorageMap<_, Blake2_128Concat, NetUid, I96F32, ValueQuery, DefaultMinRootClaimAmount<T>>;
+
+    /// --- MAP ( hotkey ) --> opted_in_tao_stake | Total TAO stake from opted-in coldkeys on ROOT
+    /// This tracks the sum of all TAO stakes on ROOT from coldkeys that have opted in to airdrops.
+    /// Used for efficient airdrop distribution without iterating over all stakers.
+    #[pallet::storage]
+    pub type RootAirdropOptedInTaoStake<T: Config> =
+        StorageMap<_, Blake2_128Concat, T::AccountId, AlphaCurrency, ValueQuery, DefaultZeroAlpha<T>>;
+
     /// =============================
     /// ==== EVM related storage ====
     /// =============================
