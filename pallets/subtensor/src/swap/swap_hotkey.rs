@@ -501,8 +501,27 @@ impl<T: Config> Pallet<T> {
         weight.saturating_accrue(T::DbWeight::get().writes(old_alpha_values.len() as u64));
 
         // 9.1. Transfer root claimable
-
         Self::transfer_root_claimable_for_new_hotkey(old_hotkey, new_hotkey);
+
+        // 9.1.1. Transfer airdrop claimable
+        Self::transfer_airdrop_claimable_for_new_hotkey(old_hotkey, new_hotkey);
+        weight.saturating_accrue(T::DbWeight::get().reads_writes(2, 2));
+
+        // 9.1.2. Migrate airdrop opt-in counter for ROOT network
+        // When hotkey is swapped, all opted-in stake moves from old_hotkey to new_hotkey
+        // Do this outside the loop for efficiency and clarity
+        if netuid == NetUid::ROOT {
+            let old_total_opted_in = RootAirdropOptedInTaoStake::<T>::get(old_hotkey);
+            if !old_total_opted_in.is_zero() {
+                // Transfer all opted-in stake from old_hotkey to new_hotkey
+                // Remove old_hotkey value and set new_hotkey to old_hotkey value
+                // Note: new_hotkey should not have any opted-in stake yet (it's a new hotkey),
+                // but we replace rather than add to be safe
+                RootAirdropOptedInTaoStake::<T>::remove(old_hotkey);
+                RootAirdropOptedInTaoStake::<T>::insert(new_hotkey, old_total_opted_in);
+                weight.saturating_accrue(T::DbWeight::get().reads_writes(2, 2));
+            }
+        }
 
         // 9.2.  Insert the new alpha values.
         for ((coldkey, netuid_alpha), alpha) in old_alpha_values {
@@ -510,6 +529,12 @@ impl<T: Config> Pallet<T> {
                 Self::transfer_root_claimed_for_new_keys(
                     netuid, old_hotkey, new_hotkey, &coldkey, &coldkey,
                 );
+
+                // Transfer airdrop claimed for this coldkey
+                Self::transfer_airdrop_claimed_for_new_keys(
+                    netuid, old_hotkey, new_hotkey, &coldkey, &coldkey,
+                );
+                weight.saturating_accrue(T::DbWeight::get().reads_writes(2, 2));
 
                 let new_alpha = Alpha::<T>::take((new_hotkey, &coldkey, netuid));
                 Alpha::<T>::remove((old_hotkey, &coldkey, netuid));

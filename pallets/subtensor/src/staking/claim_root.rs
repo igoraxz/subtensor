@@ -191,6 +191,13 @@ impl<T: Config> Pallet<T> {
                 coldkey,
                 owed_tao.amount_paid_out.into(),
             );
+
+            // Adjust airdrop claimed and opted-in counter (opt-in check is inside the function)
+            Self::add_stake_adjust_airdrop_claimed_for_hotkey_and_coldkey(
+                hotkey,
+                coldkey,
+                owed_tao.amount_paid_out.to_u64(),
+            );
         } else
         /* Keep */
         {
@@ -399,5 +406,336 @@ impl<T: Config> Pallet<T> {
         }
 
         let _ = RootClaimed::<T>::clear_prefix((netuid,), u32::MAX, None);
+    }
+
+    // ============================
+    // ==== Airdrop Claims =====
+    // ============================
+
+    pub fn get_airdrop_claimable_for_hotkey_coldkey(
+        hotkey: &T::AccountId,
+        coldkey: &T::AccountId,
+        netuid: NetUid,
+    ) -> I96F32 {
+        // Get the total claimable_rate for this hotkey and this subnet
+        // This rate is calculated as: amount / opted_in_tao_stake (for the hotkey)
+        let claimable_rate: I96F32 = *AirdropClaimable::<T>::get(hotkey)
+            .get(&netuid)
+            .unwrap_or(&I96F32::from(0));
+
+        // Only calculate claimable if coldkey is opted-in
+        // The claimable_rate is based on opted-in stake, so we should multiply by opted-in stake
+        if !AirdropOptIn::<T>::get(coldkey) {
+            return I96F32::from(0);
+        }
+
+        // Get this coldkey's TAO stake balance on ROOT for this hotkey
+        // Since the coldkey is opted-in, their total stake equals their opted-in stake
+        let root_stake: I96F32 = I96F32::saturating_from_num(
+            Self::get_stake_for_hotkey_and_coldkey_on_subnet(hotkey, coldkey, NetUid::ROOT),
+        );
+
+        // Compute the proportion owed to this coldkey via balance
+        // claimable_rate * coldkey_stake gives the correct share since:
+        // - claimable_rate = amount / total_opted_in_stake (for hotkey)
+        // - coldkey_stake is part of the opted-in stake (since coldkey is opted-in)
+        let claimable: I96F32 = claimable_rate.saturating_mul(root_stake);
+
+        claimable
+    }
+
+    pub fn get_airdrop_owed_for_hotkey_coldkey_float(
+        hotkey: &T::AccountId,
+        coldkey: &T::AccountId,
+        netuid: NetUid,
+    ) -> I96F32 {
+        let claimable = Self::get_airdrop_claimable_for_hotkey_coldkey(hotkey, coldkey, netuid);
+
+        // Get the airdrop claimed to avoid overclaiming
+        let airdrop_claimed: I96F32 =
+            I96F32::saturating_from_num(AirdropClaimed::<T>::get((netuid, hotkey, coldkey)));
+
+        // Subtract the already claimed alpha
+        let owed: I96F32 = claimable.saturating_sub(airdrop_claimed);
+
+        owed
+    }
+
+    pub fn get_airdrop_owed_for_hotkey_coldkey(
+        hotkey: &T::AccountId,
+        coldkey: &T::AccountId,
+        netuid: NetUid,
+    ) -> u64 {
+        let owed = Self::get_airdrop_owed_for_hotkey_coldkey_float(hotkey, coldkey, netuid);
+
+        // Convert owed to u64, mapping negative values to 0
+        let owed_u64: u64 = if owed.is_negative() {
+            0
+        } else {
+            owed.saturating_to_num::<u64>()
+        };
+
+        owed_u64
+    }
+
+    pub fn airdrop_claim_on_subnet(
+        hotkey: &T::AccountId,
+        coldkey: &T::AccountId,
+        netuid: NetUid,
+        ignore_minimum_condition: bool,
+    ) {
+        // Get the airdrop owed
+        let owed: I96F32 = Self::get_airdrop_owed_for_hotkey_coldkey_float(hotkey, coldkey, netuid);
+
+        if !ignore_minimum_condition
+            && owed < I96F32::saturating_from_num(AirdropClaimableThreshold::<T>::get(&netuid))
+        {
+            log::debug!(
+                "airdrop claim on subnet {netuid} is skipped: {owed:?} for h={hotkey:?},c={coldkey:?} "
+            );
+            return; // no-op
+        }
+
+        // Convert owed to u64, mapping negative values to 0
+        let owed_u64: u64 = if owed.is_negative() {
+            0
+        } else {
+            owed.saturating_to_num::<u64>()
+        };
+
+        if owed_u64 == 0 {
+            log::debug!(
+                "airdrop claim on subnet {netuid} is skipped: {owed:?} for h={hotkey:?},c={coldkey:?}"
+            );
+            return; // no-op
+        }
+
+        // Always keep mode - auto-stake to the validator hotkey on source subnet
+        Self::increase_stake_for_hotkey_and_coldkey_on_subnet(
+            hotkey,
+            coldkey,
+            netuid,
+            owed_u64.into(),
+        );
+
+        // Increase airdrop claimed by owed amount
+        AirdropClaimed::<T>::mutate((netuid, hotkey, coldkey), |airdrop_claimed| {
+            *airdrop_claimed = airdrop_claimed.saturating_add(owed_u64.into());
+        });
+    }
+
+    pub fn airdrop_claim_all(
+        hotkey: &T::AccountId,
+        coldkey: &T::AccountId,
+        subnets: Option<BTreeSet<NetUid>>,
+    ) -> Weight {
+        let mut weight = Weight::default();
+
+        // Iterate over all the subnets this hotkey has claimable airdrop for
+        let airdrop_claimable = AirdropClaimable::<T>::get(hotkey);
+        weight.saturating_accrue(T::DbWeight::get().reads(1));
+
+        for (netuid, _) in airdrop_claimable.iter() {
+            let skip = subnets
+                .as_ref()
+                .map(|subnets| !subnets.contains(netuid))
+                .unwrap_or(false);
+
+            if skip {
+                continue;
+            }
+
+            Self::airdrop_claim_on_subnet(hotkey, coldkey, *netuid, false);
+            weight.saturating_accrue(T::DbWeight::get().reads(7));
+            weight.saturating_accrue(T::DbWeight::get().writes(5));
+        }
+
+        weight
+    }
+
+    pub fn do_airdrop_claim(coldkey: T::AccountId, subnets: Option<BTreeSet<NetUid>>) -> Weight {
+        let mut weight = Weight::default();
+
+        // Check if coldkey is opted-in
+        if !AirdropOptIn::<T>::get(&coldkey) {
+            log::debug!("Coldkey {coldkey:?} is not opted-in to airdrop, skipping claim");
+            return weight;
+        }
+
+        let hotkeys = StakingHotkeys::<T>::get(&coldkey);
+        weight.saturating_accrue(T::DbWeight::get().reads(1));
+
+        hotkeys.iter().for_each(|hotkey| {
+            weight.saturating_accrue(T::DbWeight::get().reads(1));
+            weight.saturating_accrue(Self::airdrop_claim_all(hotkey, &coldkey, subnets.clone()));
+        });
+
+        Self::deposit_event(Event::AirdropClaimed { coldkey });
+
+        weight
+    }
+
+    pub fn run_auto_claim_airdrop(last_block_hash: T::Hash) -> Weight {
+        let mut weight: Weight = Weight::default();
+
+        let n = NumStakingColdkeys::<T>::get();
+        let k = NumAirdropClaim::<T>::get();
+        weight.saturating_accrue(T::DbWeight::get().reads(2));
+
+        if k == 0 {
+            return weight; // Auto-claim disabled
+        }
+
+        let coldkeys_to_claim: Vec<u64> = Self::block_hash_to_indices(last_block_hash, k, n);
+        weight.saturating_accrue(Self::block_hash_to_indices_weight(k, n));
+
+        for i in coldkeys_to_claim.iter() {
+            weight.saturating_accrue(T::DbWeight::get().reads(1));
+            if let Ok(coldkey) = StakingColdkeysByIndex::<T>::try_get(i) {
+                // Only claim if opted-in
+                if AirdropOptIn::<T>::get(&coldkey) {
+                    weight.saturating_accrue(Self::do_airdrop_claim(coldkey.clone(), None));
+                }
+            }
+
+            continue;
+        }
+
+        weight
+    }
+
+    /// Transfer airdrop claimable from old hotkey to new hotkey during hotkey swap.
+    /// Similar to `transfer_root_claimable_for_new_hotkey`.
+    pub fn transfer_airdrop_claimable_for_new_hotkey(
+        old_hotkey: &T::AccountId,
+        new_hotkey: &T::AccountId,
+    ) {
+        let src_airdrop_claimable = AirdropClaimable::<T>::get(old_hotkey);
+        let mut dst_airdrop_claimable = AirdropClaimable::<T>::get(new_hotkey);
+        AirdropClaimable::<T>::remove(old_hotkey);
+
+        for (netuid, claimable_rate) in src_airdrop_claimable.into_iter() {
+            dst_airdrop_claimable
+                .entry(netuid)
+                .and_modify(|total| *total = total.saturating_add(claimable_rate))
+                .or_insert(claimable_rate);
+        }
+
+        if !dst_airdrop_claimable.is_empty() {
+            AirdropClaimable::<T>::insert(new_hotkey, dst_airdrop_claimable);
+        }
+    }
+
+    /// Transfer airdrop claimed from old keys to new keys during hotkey/coldkey swap.
+    /// Similar to `transfer_root_claimed_for_new_keys`.
+    pub fn transfer_airdrop_claimed_for_new_keys(
+        netuid: NetUid,
+        old_hotkey: &T::AccountId,
+        new_hotkey: &T::AccountId,
+        old_coldkey: &T::AccountId,
+        new_coldkey: &T::AccountId,
+    ) {
+        let old_airdrop_claimed = AirdropClaimed::<T>::get((netuid, old_hotkey, old_coldkey));
+        AirdropClaimed::<T>::remove((netuid, old_hotkey, old_coldkey));
+
+        AirdropClaimed::<T>::mutate((netuid, new_hotkey, new_coldkey), |new_airdrop_claimed| {
+            *new_airdrop_claimed = old_airdrop_claimed.saturating_add(*new_airdrop_claimed);
+        });
+    }
+
+    /// Adjust airdrop claimed and opted-in counter when stake is added to ROOT.
+    /// Similar to `add_stake_adjust_root_claimed_for_hotkey_and_coldkey`.
+    /// This function handles all airdrop-related logic atomically:
+    /// - Updates RootAirdropOptedInTaoStake counter if coldkey is opted-in
+    /// - Adjusts airdrop claimed amounts for all subnets if coldkey is opted-in
+    /// This ensures that when stake is added, the claimed amount is adjusted to account
+    /// for the new stake's share of existing airdrop distributions.
+    pub fn add_stake_adjust_airdrop_claimed_for_hotkey_and_coldkey(
+        hotkey: &T::AccountId,
+        coldkey: &T::AccountId,
+        amount: u64,
+    ) {
+        // Only adjust if coldkey is opted-in
+        if !AirdropOptIn::<T>::get(coldkey) {
+            return;
+        }
+
+        let amount_alpha: AlphaCurrency = amount.into();
+
+        // Update RootAirdropOptedInTaoStake counter
+        // mutate() will initialize to zero if the key doesn't exist (ValueQuery with DefaultZeroAlpha)
+        if !amount_alpha.is_zero() {
+            RootAirdropOptedInTaoStake::<T>::mutate(hotkey, |total| {
+                *total = total.saturating_add(amount_alpha);
+            });
+        }
+
+        // Iterate over all the subnets this hotkey has airdrop claimable for
+        let airdrop_claimable = AirdropClaimable::<T>::get(hotkey);
+        for (netuid, claimable_rate) in airdrop_claimable.iter() {
+            // Get current staker airdrop claimed value
+            let airdrop_claimed: u128 = AirdropClaimed::<T>::get((netuid, hotkey, coldkey));
+
+            // Increase airdrop claimed based on the claimable rate and new stake amount
+            // claimable_rate is per unit of opted-in stake, so multiply by amount
+            let new_airdrop_claimed = airdrop_claimed.saturating_add(
+                claimable_rate
+                    .saturating_mul(I96F32::from(u64::from(amount)))
+                    .saturating_to_num(),
+            );
+
+            // Set the new airdrop claimed value
+            AirdropClaimed::<T>::insert((netuid, hotkey, coldkey), new_airdrop_claimed);
+        }
+    }
+
+    /// Adjust airdrop claimed and opted-in counter when stake is removed from ROOT.
+    /// Similar to `remove_stake_adjust_root_claimed_for_hotkey_and_coldkey`.
+    /// This function handles all airdrop-related logic atomically:
+    /// - Updates RootAirdropOptedInTaoStake counter if coldkey is opted-in
+    /// - Adjusts airdrop claimed amounts for all subnets if coldkey is opted-in
+    /// This ensures that when stake is removed, the claimed amount is adjusted to account
+    /// for the removed stake's share of existing airdrop distributions.
+    pub fn remove_stake_adjust_airdrop_claimed_for_hotkey_and_coldkey(
+        hotkey: &T::AccountId,
+        coldkey: &T::AccountId,
+        amount: AlphaCurrency,
+    ) {
+        // Only adjust if coldkey is opted-in
+        if !AirdropOptIn::<T>::get(coldkey) {
+            return;
+        }
+
+        // Update RootAirdropOptedInTaoStake counter
+        // get() returns zero if the key doesn't exist (ValueQuery with DefaultZeroAlpha)
+        if !amount.is_zero() {
+            let old_total = RootAirdropOptedInTaoStake::<T>::get(hotkey);
+            // Use saturating_sub to prevent underflow, then clamp to zero
+            let new_total = old_total.saturating_sub(amount);
+            // Set to zero instead of removing for safer operations
+            if new_total.is_zero() {
+                RootAirdropOptedInTaoStake::<T>::insert(hotkey, AlphaCurrency::ZERO);
+            } else {
+                RootAirdropOptedInTaoStake::<T>::insert(hotkey, new_total);
+            }
+        }
+
+        // Iterate over all the subnets this hotkey has airdrop claimable for
+        let airdrop_claimable = AirdropClaimable::<T>::get(hotkey);
+        for (netuid, claimable_rate) in airdrop_claimable.iter() {
+            // Get current staker airdrop claimed value
+            let airdrop_claimed: u128 = AirdropClaimed::<T>::get((netuid, hotkey, coldkey));
+
+            // Decrease airdrop claimed based on the claimable rate and removed stake amount
+            // claimable_rate is per unit of opted-in stake, so multiply by amount
+            let new_airdrop_claimed = airdrop_claimed.saturating_sub(
+                claimable_rate
+                    .saturating_mul(I96F32::from(u64::from(amount)))
+                    .saturating_to_num(),
+            );
+
+            // Set the new airdrop claimed value
+            AirdropClaimed::<T>::insert((netuid, hotkey, coldkey), new_airdrop_claimed);
+        }
     }
 }

@@ -58,7 +58,9 @@ impl<T: Config> Pallet<T> {
         tao_in: &BTreeMap<NetUid, U96F32>,
         alpha_in: &BTreeMap<NetUid, U96F32>,
         excess_tao: &BTreeMap<NetUid, U96F32>,
-    ) {
+    ) -> BTreeMap<NetUid, AlphaCurrency> {
+        let mut chain_bought_alpha: BTreeMap<NetUid, AlphaCurrency> = BTreeMap::new();
+        
         for netuid_i in subnets_to_emit_to.iter() {
             let tao_in_i: TaoCurrency =
                 tou64!(*tao_in.get(netuid_i).unwrap_or(&asfloat!(0))).into();
@@ -78,8 +80,13 @@ impl<T: Config> Pallet<T> {
                 );
                 if let Ok(buy_swap_result_ok) = buy_swap_result {
                     let bought_alpha: AlphaCurrency = buy_swap_result_ok.amount_paid_out.into();
-                    Self::recycle_subnet_alpha(*netuid_i, bought_alpha);
+                    // Track chain-bought alpha instead of recycling - it will go to airdrop
+                    chain_bought_alpha.insert(*netuid_i, bought_alpha);
+                } else {
+                    chain_bought_alpha.insert(*netuid_i, AlphaCurrency::ZERO);
                 }
+            } else {
+                chain_bought_alpha.insert(*netuid_i, AlphaCurrency::ZERO);
             }
 
             // Inject Alpha in.
@@ -109,6 +116,8 @@ impl<T: Config> Pallet<T> {
                     .saturating_add(difference_tao.into());
             });
         }
+        
+        chain_bought_alpha
     }
 
     pub fn get_subnet_terms(
@@ -147,7 +156,10 @@ impl<T: Config> Pallet<T> {
             let alpha_out_i: U96F32 = alpha_emission_i;
             let mut alpha_in_i: U96F32 = tao_emission_i.safe_div_or(price_i, U96F32::from_num(0.0));
 
-            let alpha_injection_cap: U96F32 = alpha_emission_i.min(tao_block_emission);
+            // Update alpha_injection_cap to ensure alpha_in_i never exceeds 50% of alpha_out_i
+            // This safeguard ensures that (alpha_in_i - root_alpha) (airdrop term) never consumes
+            // more than half of alpha_out_i.
+            let alpha_injection_cap: U96F32 = (alpha_emission_i.saturating_mul(asfloat!(0.5))).min(tao_block_emission);
             if alpha_in_i > alpha_injection_cap {
                 alpha_in_i = alpha_injection_cap;
                 tao_in_i = alpha_in_i.saturating_mul(price_i);
@@ -179,7 +191,7 @@ impl<T: Config> Pallet<T> {
         log::debug!("excess_amount: {excess_amount:?}");
 
         // --- 2. Inject TAO and ALPHA to pool and swap with excess TAO.
-        Self::inject_and_maybe_swap(subnets_to_emit_to, &tao_in, &alpha_in, &excess_amount);
+        let chain_bought_alpha = Self::inject_and_maybe_swap(subnets_to_emit_to, &tao_in, &alpha_in, &excess_amount);
 
         // --- 3. Inject ALPHA for participants.
         let cut_percent: U96F32 = Self::get_float_subnet_owner_cut();
@@ -187,6 +199,8 @@ impl<T: Config> Pallet<T> {
         for netuid_i in subnets_to_emit_to.iter() {
             // Get alpha_out for this block.
             let mut alpha_out_i: U96F32 = *alpha_out.get(netuid_i).unwrap_or(&asfloat!(0));
+            let alpha_in_i: U96F32 = *alpha_in.get(netuid_i).unwrap_or(&asfloat!(0));
+            let chain_bought_alpha_i: AlphaCurrency = *chain_bought_alpha.get(netuid_i).unwrap_or(&AlphaCurrency::ZERO);
 
             let alpha_created: AlphaCurrency = AlphaCurrency::from(tou64!(alpha_out_i));
             SubnetAlphaOutEmission::<T>::insert(*netuid_i, alpha_created);
@@ -194,7 +208,59 @@ impl<T: Config> Pallet<T> {
                 *total = total.saturating_add(alpha_created);
             });
 
-            // Calculate the owner cut.
+            // Get root proportional dividends.
+            let root_proportion = Self::root_proportion(*netuid_i);
+            log::debug!("root_proportion: {root_proportion:?}");
+
+            // Calculate root_alpha using closed-form solution.
+            // This solves the fixed-point equation where:
+            // - airdrop_alpha = alpha_in_i - root_alpha
+            // - subnet_alpha = alpha_out_i - airdrop_alpha = alpha_out_i - alpha_in_i + root_alpha
+            // - root_alpha = subnet_alpha * (1 - cut_percent) * root_proportion * 0.5
+            // The closed-form preserves the original design property: root_alpha is allocated
+            // as a fraction of subnet_alpha (after owner cut), maintaining the same split
+            // ratio as before, but now accounting for the airdrop term.
+            // k = (1 - cut_percent) * root_proportion * 0.5
+            // where cut_percent is the owner cut percentage (e.g., 0.1 for 10%)
+            let k: U96F32 = (asfloat!(1.0).saturating_sub(cut_percent))
+                .saturating_mul(root_proportion)
+                .saturating_mul(asfloat!(0.5));
+            
+            // root_alpha = (alpha_out_i - alpha_in_i) * k / (1 - k)
+            let root_alpha: U96F32 = (alpha_out_i.saturating_sub(alpha_in_i))
+                .saturating_mul(k)
+                .safe_div(asfloat!(1.0).saturating_sub(k))
+                .unwrap_or(asfloat!(0.0));
+            log::debug!("root_alpha: {root_alpha:?}");
+
+            // Calculate airdrop_alpha = chain_bought_alpha + alpha_in_i - root_alpha
+            // 
+            // IMPORTANT: airdrop_alpha represents alpha of equivalent value to the total TAO emission
+            // that is going to the subnet via liquidity injection (alpha_in_i) + chain buys (chain_bought_alpha_i),
+            // with root_alpha excluded, since root_alpha is distributed to root as root dividends and hence
+            // does not need to be included into the airdrop.
+            // 
+            // This required us to solve for a closed-form root_alpha formula to calculate airdrop size precisely
+            // & at the same time retain standard proportions of the subnet_alpha split to subnet owner / validators / miners.
+            let airdrop_alpha: AlphaCurrency = chain_bought_alpha_i
+                .saturating_add(AlphaCurrency::from(tou64!(alpha_in_i)))
+                .saturating_sub(AlphaCurrency::from(tou64!(root_alpha)));
+            
+            // IMPORTANT: Deduct airdrop_alpha from alpha_out_i BEFORE calculating owner cut
+            // This ensures owner cut and other distributions are based on the remaining alpha
+            let airdrop_alpha_float: U96F32 = asfloat!(airdrop_alpha.to_u64());
+            alpha_out_i = alpha_out_i.saturating_sub(airdrop_alpha_float);
+            
+            // Accumulate airdrop alpha in pending for ROOT network (airdrop goes to ROOT validators)
+            // Store source subnet info for later distribution
+            if *netuid_i != NetUid::ROOT && airdrop_alpha > AlphaCurrency::ZERO {
+                // Accumulate airdrop alpha per source subnet, will be distributed to ROOT validators
+                PendingAirdropAlpha::<T>::mutate(*netuid_i, |total| {
+                    *total = total.saturating_add(airdrop_alpha);
+                });
+            }
+
+            // Calculate the owner cut from the remaining alpha_out_i (after airdrop deduction)
             let owner_cut_i: U96F32 = alpha_out_i.saturating_mul(cut_percent);
             log::debug!("owner_cut_i: {owner_cut_i:?}");
             // Deduct owner cut from alpha_out.
@@ -203,16 +269,6 @@ impl<T: Config> Pallet<T> {
             PendingOwnerCut::<T>::mutate(*netuid_i, |total| {
                 *total = total.saturating_add(tou64!(owner_cut_i).into());
             });
-
-            // Get root proportional dividends.
-            let root_proportion = Self::root_proportion(*netuid_i);
-            log::debug!("root_proportion: {root_proportion:?}");
-
-            // Get root alpha from root prop.
-            let root_alpha: U96F32 = root_proportion
-                .saturating_mul(alpha_out_i) // Total alpha emission per block remaining.
-                .saturating_mul(asfloat!(0.5)); // 50% to validators.
-            log::debug!("root_alpha: {root_alpha:?}");
 
             // Get pending server alpha, which is the miner cut of the alpha out.
             // Currently miner cut is 50% of the alpha out.
@@ -305,6 +361,9 @@ impl<T: Config> Pallet<T> {
             (AlphaCurrency, AlphaCurrency, AlphaCurrency, AlphaCurrency),
         >,
     ) {
+        // Collect airdrop alpha from all subnets for distribution to ROOT
+        let mut airdrop_by_source: BTreeMap<NetUid, AlphaCurrency> = BTreeMap::new();
+
         for (
             &netuid,
             &(pending_server_alpha, pending_validator_alpha, pending_root_alpha, pending_owner_cut),
@@ -318,6 +377,21 @@ impl<T: Config> Pallet<T> {
                 pending_root_alpha,
                 pending_owner_cut,
             );
+
+            // Collect airdrop alpha from this subnet (if any) for distribution to ROOT
+            if netuid != NetUid::ROOT {
+                let pending_airdrop = PendingAirdropAlpha::<T>::get(netuid);
+                if !pending_airdrop.is_zero() {
+                    airdrop_by_source.insert(netuid, pending_airdrop);
+                    // Drain the airdrop alpha
+                    PendingAirdropAlpha::<T>::insert(netuid, AlphaCurrency::ZERO);
+                }
+            }
+        }
+
+        // Distribute airdrop from each source subnet to ROOT validators
+        for (source_netuid, airdrop_alpha) in airdrop_by_source {
+            Self::distribute_airdrop_alpha(airdrop_alpha, source_netuid);
         }
     }
 
@@ -953,5 +1027,114 @@ impl<T: Config> Pallet<T> {
         let adjusted_block = block_number.wrapping_add(netuid_plus_one);
         let remainder = adjusted_block.checked_rem(tempo_plus_one).unwrap_or(0);
         (tempo as u64).saturating_sub(remainder)
+    }
+
+    /// Distributes airdrop alpha to ROOT validators pro-rata to their opted-in TAO stake on ROOT.
+    /// Only opted-in stakers receive airdrop shares. Opted-out stakers' shares are redistributed to opted-in stakers.
+    ///
+    /// # Arguments
+    /// * `pending_airdrop_alpha` - Total airdrop alpha to distribute
+    /// * `source_netuid` - The subnet where the airdrop originated from
+    pub fn distribute_airdrop_alpha(
+        pending_airdrop_alpha: AlphaCurrency,
+        source_netuid: NetUid,
+    ) {
+        if pending_airdrop_alpha.is_zero() {
+            return;
+        }
+
+        log::debug!(
+            "Distributing airdrop alpha {pending_airdrop_alpha:?} from source subnet {source_netuid:?} to ROOT validators (opted-in stake only)"
+        );
+
+        // Get all ROOT validators (hotkeys with UIDs on ROOT)
+        let n_root: u16 = Self::get_subnetwork_n(NetUid::ROOT);
+        let mut root_validators: Vec<T::AccountId> = Vec::new();
+        let mut total_opted_in_tao: U96F32 = asfloat!(0);
+        let mut hotkey_opted_in_tao: BTreeMap<T::AccountId, U96F32> = BTreeMap::new();
+
+        for uid in 0..n_root {
+            if let Some(hotkey) = Keys::<T>::try_get(NetUid::ROOT, uid).ok() {
+                // Get opted-in TAO stake on ROOT for this hotkey (from RootAirdropOptedInTaoStake)
+                let opted_in_tao = RootAirdropOptedInTaoStake::<T>::get(&hotkey);
+                let opted_in_tao_float: U96F32 = asfloat!(opted_in_tao.to_u64());
+                
+                if opted_in_tao > AlphaCurrency::ZERO {
+                    root_validators.push(hotkey.clone());
+                    hotkey_opted_in_tao.insert(hotkey.clone(), opted_in_tao_float);
+                    total_opted_in_tao = total_opted_in_tao.saturating_add(opted_in_tao_float);
+                }
+            }
+        }
+
+        if total_opted_in_tao.is_zero() {
+            log::debug!("No opted-in TAO stake found on ROOT, skipping airdrop distribution");
+            return;
+        }
+
+        // Distribute airdrop pro-rata to each validator hotkey based on their opted-in TAO stake only
+        // Opted-out stakers' shares are automatically redistributed to opted-in stakers
+        let pending_airdrop_alpha_float: U96F32 = asfloat!(pending_airdrop_alpha.to_u64());
+        for hotkey in root_validators {
+            let opted_in_tao = hotkey_opted_in_tao.get(&hotkey).unwrap_or(&asfloat!(0));
+            
+            // Calculate hotkey's share of airdrop based on opted-in stake
+            let hotkey_share: U96F32 = pending_airdrop_alpha_float
+                .saturating_mul(*opted_in_tao)
+                .safe_div(total_opted_in_tao)
+                .unwrap_or(asfloat!(0.0));
+
+            if hotkey_share.is_zero() {
+                continue;
+            }
+
+            let hotkey_share_alpha: AlphaCurrency = AlphaCurrency::from(tou64!(hotkey_share));
+
+            // Increase airdrop claimable for this hotkey and source subnet
+            // The claimable rate is stored per hotkey, and when claiming, we check opt-in status
+            // and calculate the coldkey's share based on their TAO stake
+            Self::increase_airdrop_claimable_for_hotkey_and_subnet(
+                &hotkey,
+                source_netuid,
+                hotkey_share_alpha,
+            );
+        }
+    }
+
+    /// Increases airdrop claimable for a hotkey on a source subnet.
+    /// Similar to increase_root_claimable_for_hotkey_and_subnet but for airdrops.
+    /// Uses opted-in TAO stake for calculating the claimable rate.
+    ///
+    /// # Arguments
+    /// * `hotkey` - The validator hotkey
+    /// * `netuid` - The source subnet where airdrop originated
+    /// * `amount` - Amount of alpha to add to claimable
+    pub fn increase_airdrop_claimable_for_hotkey_and_subnet(
+        hotkey: &T::AccountId,
+        netuid: NetUid,
+        amount: AlphaCurrency,
+    ) {
+        // Get opted-in TAO stake on ROOT for this hotkey
+        let opted_in_tao: I96F32 =
+            I96F32::saturating_from_num(RootAirdropOptedInTaoStake::<T>::get(hotkey));
+
+        // Calculate claimable rate increment: amount / opted_in_tao_stake
+        // If opted_in_tao is zero, increment will be 0 (handled by unwrap_or)
+        let increment: I96F32 = I96F32::saturating_from_num(amount)
+            .checked_div(opted_in_tao)
+            .unwrap_or(I96F32::saturating_from_num(0.0));
+
+        // Skip if increment is zero (either amount is zero or opted_in_tao is zero)
+        if increment.is_zero() {
+            return;
+        }
+
+        // Increment claimable for this subnet
+        AirdropClaimable::<T>::mutate(hotkey, |claimable| {
+            claimable
+                .entry(netuid)
+                .and_modify(|claim_total| *claim_total = claim_total.saturating_add(increment))
+                .or_insert(increment);
+        });
     }
 }

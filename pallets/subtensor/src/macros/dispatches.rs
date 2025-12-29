@@ -2432,5 +2432,190 @@ mod dispatches {
 
             Ok(())
         }
+
+        /// --- Claims airdrop for a coldkey on specified subnets.
+        /// # Args:
+        /// * 'origin': (<T as frame_system::Config>Origin):
+        /// 	- The signature of the caller's coldkey.
+        /// * 'subnets': Vec<NetUid>:
+        /// 	- The list of subnets to claim airdrop from.
+        ///
+        /// # Event:
+        /// * AirdropClaimed;
+        /// 	- On the successfully claiming airdrop for the coldkey.
+        ///
+        #[pallet::call_index(125)]
+        #[pallet::weight((
+            Weight::from_parts(19_420_000, 0)
+            .saturating_add(T::DbWeight::get().reads(2_u64))
+            .saturating_add(T::DbWeight::get().writes(4_u64)),
+            DispatchClass::Normal,
+            Pays::Yes
+        ))]
+        pub fn claim_airdrop(
+            origin: OriginFor<T>,
+            subnets: Vec<NetUid>,
+        ) -> DispatchResultWithPostInfo {
+            let coldkey: T::AccountId = ensure_signed(origin)?;
+
+            ensure!(!subnets.is_empty(), Error::<T>::InvalidSubnetNumber);
+            ensure!(
+                subnets.len() <= MAX_SUBNET_CLAIMS,
+                Error::<T>::InvalidSubnetNumber
+            );
+
+            Self::maybe_add_coldkey_index(&coldkey);
+
+            let weight = Self::do_airdrop_claim(coldkey, Some(subnets.into_iter().collect()));
+            Ok((Some(weight), Pays::Yes).into())
+        }
+
+        /// --- Sets airdrop opt-in status for a coldkey.
+        #[pallet::call_index(126)]
+        #[pallet::weight((
+            Weight::from_parts(5_000_000, 0)
+            .saturating_add(T::DbWeight::get().reads(1_u64))
+            .saturating_add(T::DbWeight::get().writes(1_u64)),
+            DispatchClass::Normal,
+            Pays::No
+        ))]
+        pub fn set_airdrop_opt_in(
+            origin: OriginFor<T>,
+            opt_in: bool,
+        ) -> DispatchResult {
+            let coldkey = ensure_signed(origin)?;
+
+            let was_opted_in = AirdropOptIn::<T>::get(&coldkey);
+            
+            // If status is not changing, no-op
+            if was_opted_in == opt_in {
+                return Ok(());
+            }
+
+            if opt_in {
+                // Opting in: set opt-in status FIRST so helper function can see it
+                AirdropOptIn::<T>::insert(&coldkey, true);
+                
+                // Then sync counters and set claimed to current claimable
+                let hotkeys = StakingHotkeys::<T>::get(&coldkey);
+                
+                for hotkey in hotkeys.iter() {
+                    // Get ROOT stake for this hotkey-coldkey pair
+                    let root_stake = Self::get_stake_for_hotkey_and_coldkey_on_subnet(
+                        hotkey,
+                        &coldkey,
+                        NetUid::ROOT,
+                    );
+                    
+                    if !root_stake.is_zero() {
+                        // When opting in, we use the helper function to:
+                        // 1. Update the counter (stake is now opted-in)
+                        // 2. Adjust claimed amounts to account for existing distributions
+                        // The helper function will update the counter and adjust claimed based on
+                        // the stake amount. However, we need to set claimed to current claimable
+                        // level (not add to existing), so we first set it to zero, then call the helper.
+                        
+                        // First, set claimed to zero for all subnets (if any exists)
+                        let airdrop_claimable = AirdropClaimable::<T>::get(hotkey);
+                        for (netuid, _) in airdrop_claimable.iter() {
+                            AirdropClaimed::<T>::insert((*netuid, hotkey.clone(), coldkey.clone()), 0u128);
+                        }
+                        
+                        // Now use the helper function to update counter and set claimed correctly
+                        // This will add the stake to the counter and set claimed to claimable_rate * stake
+                        Self::add_stake_adjust_airdrop_claimed_for_hotkey_and_coldkey(
+                            hotkey,
+                            &coldkey,
+                            root_stake.to_u64(),
+                        );
+                    }
+                }
+            } else {
+                // Opting out: remove from counters and adjust airdrop claimed
+                // Note: We call remove_stake_adjust_airdrop_claimed BEFORE updating opt-in status
+                // so it sees the coldkey as still opted-in and adjusts correctly.
+                let hotkeys = StakingHotkeys::<T>::get(&coldkey);
+                
+                for hotkey in hotkeys.iter() {
+                    let root_stake = Self::get_stake_for_hotkey_and_coldkey_on_subnet(
+                        hotkey,
+                        &coldkey,
+                        NetUid::ROOT,
+                    );
+                    
+                    if !root_stake.is_zero() {
+                        // When opting out, we need to:
+                        // 1. Adjust claimed amounts (remove stake's share from claimed)
+                        // 2. Update the counter (stake is no longer opted-in)
+                        // The adjustment function will handle both the counter and claimed amounts.
+                        
+                        // Adjust airdrop claimed and counter (adjustment function handles both atomically)
+                        Self::remove_stake_adjust_airdrop_claimed_for_hotkey_and_coldkey(
+                            hotkey,
+                            &coldkey,
+                            root_stake,
+                        );
+                    }
+                }
+                
+                // Set opt-in status to false AFTER calling helper function
+                AirdropOptIn::<T>::insert(&coldkey, false);
+            }
+
+            Self::deposit_event(Event::<T>::AirdropOptInSet {
+                coldkey,
+                opt_in,
+            });
+
+            Ok(())
+        }
+
+        /// --- Sets airdrop claim number (sudo extrinsic). Zero disables auto-claim.
+        #[pallet::call_index(127)]
+        #[pallet::weight((
+            Weight::from_parts(4_000_000, 0)
+            .saturating_add(T::DbWeight::get().reads(0_u64))
+            .saturating_add(T::DbWeight::get().writes(1_u64)),
+            DispatchClass::Operational,
+            Pays::Yes
+        ))]
+        pub fn sudo_set_num_airdrop_claims(origin: OriginFor<T>, new_value: u64) -> DispatchResult {
+            ensure_root(origin)?;
+
+            ensure!(
+                new_value <= MAX_NUM_ROOT_CLAIMS,
+                Error::<T>::InvalidNumRootClaim
+            );
+
+            NumAirdropClaim::<T>::set(new_value);
+
+            Ok(())
+        }
+
+        /// --- Sets airdrop claim threshold for subnet (sudo or owner origin).
+        #[pallet::call_index(128)]
+        #[pallet::weight((
+            Weight::from_parts(5_711_000, 0)
+            .saturating_add(T::DbWeight::get().reads(0_u64))
+            .saturating_add(T::DbWeight::get().writes(1_u64)),
+            DispatchClass::Operational,
+            Pays::Yes
+        ))]
+        pub fn sudo_set_airdrop_claim_threshold(
+            origin: OriginFor<T>,
+            netuid: NetUid,
+            new_value: u64,
+        ) -> DispatchResult {
+            Self::ensure_subnet_owner_or_root(origin, netuid)?;
+
+            ensure!(
+                new_value <= I96F32::from(MAX_ROOT_CLAIM_THRESHOLD),
+                Error::<T>::InvalidRootClaimThreshold
+            );
+
+            AirdropClaimableThreshold::<T>::set(netuid, new_value.into());
+
+            Ok(())
+        }
     }
 }

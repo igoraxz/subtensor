@@ -716,6 +716,13 @@ impl<T: Config> Pallet<T> {
         if netuid == NetUid::ROOT {
             // Adjust root claimed value for this hotkey and coldkey.
             Self::remove_stake_adjust_root_claimed_for_hotkey_and_coldkey(hotkey, coldkey, alpha);
+            
+            // Adjust airdrop claimed and opted-in counter (opt-in check is inside the function)
+            Self::remove_stake_adjust_airdrop_claimed_for_hotkey_and_coldkey(
+                hotkey,
+                coldkey,
+                alpha,
+            );
         }
 
         // Step 3: Update StakingHotkeys if the hotkey's total alpha, across all subnets, is zero
@@ -817,6 +824,14 @@ impl<T: Config> Pallet<T> {
             // Adjust root claimed for this hotkey and coldkey.
             let alpha = swap_result.amount_paid_out.into();
             Self::add_stake_adjust_root_claimed_for_hotkey_and_coldkey(hotkey, coldkey, alpha);
+            
+            // Adjust airdrop claimed and opted-in counter (opt-in check is inside the function)
+            Self::add_stake_adjust_airdrop_claimed_for_hotkey_and_coldkey(
+                hotkey,
+                coldkey,
+                alpha.to_u64(),
+            );
+            
             Self::maybe_add_coldkey_index(coldkey);
         }
 
@@ -870,6 +885,23 @@ impl<T: Config> Pallet<T> {
             netuid,
             actual_alpha_decrease,
         );
+
+        // If this is a ROOT stake transfer, adjust airdrop counters and claimed amounts
+        if netuid == NetUid::ROOT && !actual_alpha_moved.is_zero() {
+            // Remove from origin coldkey's counter and adjust claimed (if opted-in)
+            Self::remove_stake_adjust_airdrop_claimed_for_hotkey_and_coldkey(
+                origin_hotkey,
+                origin_coldkey,
+                actual_alpha_decrease,
+            );
+            
+            // Add to destination coldkey's counter and adjust claimed (if opted-in)
+            Self::add_stake_adjust_airdrop_claimed_for_hotkey_and_coldkey(
+                destination_hotkey,
+                destination_coldkey,
+                actual_alpha_moved.to_u64(),
+            );
+        }
 
         // Calculate TAO equivalent based on current price (it is accurate because
         // there's no slippage in this move)
