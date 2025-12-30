@@ -300,6 +300,10 @@ impl<T: Config> Pallet<T> {
         SubnetMovingPrice::<T>::remove(netuid);
         SubnetTaoFlow::<T>::remove(netuid);
         SubnetEmaTaoFlow::<T>::remove(netuid);
+        SubnetRootAlphaInflow::<T>::remove(netuid);
+        SubnetRootAlphaOutflow::<T>::remove(netuid);
+        SubnetEmaRootAlphaInflow::<T>::remove(netuid);
+        SubnetEmaRootAlphaOutflow::<T>::remove(netuid);
         SubnetTaoProvided::<T>::remove(netuid);
 
         // --- 13. Token / mechanism / registration toggles.

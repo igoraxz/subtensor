@@ -507,6 +507,7 @@ impl<T: Config> Pallet<T> {
         // 9.2.  Insert the new alpha values.
         for ((coldkey, netuid_alpha), alpha) in old_alpha_values {
             if netuid == netuid_alpha {
+                // Transfer root claimed (both RootClaimed and RootClaimedForEma) using helper function
                 Self::transfer_root_claimed_for_new_keys(
                     netuid, old_hotkey, new_hotkey, &coldkey, &coldkey,
                 );

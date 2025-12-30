@@ -58,7 +58,9 @@ impl<T: Config> Pallet<T> {
         tao_in: &BTreeMap<NetUid, U96F32>,
         alpha_in: &BTreeMap<NetUid, U96F32>,
         excess_tao: &BTreeMap<NetUid, U96F32>,
-    ) {
+    ) -> BTreeMap<NetUid, AlphaCurrency> {
+        let mut chain_bought_alpha: BTreeMap<NetUid, AlphaCurrency> = BTreeMap::new();
+        
         for netuid_i in subnets_to_emit_to.iter() {
             let tao_in_i: TaoCurrency =
                 tou64!(*tao_in.get(netuid_i).unwrap_or(&asfloat!(0))).into();
@@ -78,7 +80,8 @@ impl<T: Config> Pallet<T> {
                 );
                 if let Ok(buy_swap_result_ok) = buy_swap_result {
                     let bought_alpha: AlphaCurrency = buy_swap_result_ok.amount_paid_out.into();
-                    Self::recycle_subnet_alpha(*netuid_i, bought_alpha);
+                    // Instead of recycling, add to chain_bought_alpha for distribution to root dividends
+                    chain_bought_alpha.insert(*netuid_i, bought_alpha);
                 }
             }
 
@@ -109,6 +112,8 @@ impl<T: Config> Pallet<T> {
                     .saturating_add(difference_tao.into());
             });
         }
+        
+        chain_bought_alpha
     }
 
     pub fn get_subnet_terms(
@@ -179,7 +184,7 @@ impl<T: Config> Pallet<T> {
         log::debug!("excess_amount: {excess_amount:?}");
 
         // --- 2. Inject TAO and ALPHA to pool and swap with excess TAO.
-        Self::inject_and_maybe_swap(subnets_to_emit_to, &tao_in, &alpha_in, &excess_amount);
+        let chain_bought_alpha = Self::inject_and_maybe_swap(&subnets_to_emit_to, &tao_in, &alpha_in, &excess_amount);
 
         // --- 3. Inject ALPHA for participants.
         let cut_percent: U96F32 = Self::get_float_subnet_owner_cut();
@@ -239,6 +244,13 @@ impl<T: Config> Pallet<T> {
                 PendingRootAlphaDivs::<T>::mutate(*netuid_i, |total| {
                     *total = total.saturating_add(tou64!(root_alpha).into());
                 });
+                
+                // Add chain-bought alpha to pending root dividends
+                if let Some(chain_bought) = chain_bought_alpha.get(netuid_i) {
+                    PendingRootAlphaDivs::<T>::mutate(*netuid_i, |total| {
+                        *total = total.saturating_add(*chain_bought);
+                    });
+                }
             } else {
                 // If we are not selling the root alpha, we should recycle it.
                 Self::recycle_subnet_alpha(*netuid_i, AlphaCurrency::from(tou64!(root_alpha)));
