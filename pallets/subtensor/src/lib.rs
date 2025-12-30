@@ -329,16 +329,11 @@ pub mod pallet {
     )]
     /// Enum for the per-coldkey root claim setting.
     pub enum RootClaimTypeEnum {
-        /// Swap any alpha emission for TAO.
+        /// Keep all alpha emission (manual claim only).
         #[default]
-        Swap,
-        /// Keep all alpha emission.
         Keep,
-        /// Keep all alpha emission for specified subnets.
-        KeepSubnets {
-            /// Subnets to keep alpha emissions (swap everything else).
-            subnets: BTreeSet<NetUid>,
-        },
+        /// Keep all alpha emission (auto-claim enabled).
+        AutoKeep,
     }
 
     /// Default minimum root claim amount.
@@ -1457,6 +1452,45 @@ pub mod pallet {
     pub type SubnetEmaTaoFlow<T: Config> =
         StorageMap<_, Identity, NetUid, (u64, I64F64), OptionQuery>;
 
+    /// Temporary storage for root alpha inflow per subnet (reset each block after EMA update).
+    #[pallet::storage]
+    pub type SubnetRootAlphaInflow<T: Config> =
+        StorageMap<_, Identity, NetUid, i64, ValueQuery, DefaultZeroI64<T>>;
+
+    /// Temporary storage for root alpha outflow per subnet (reset each block after EMA update).
+    #[pallet::storage]
+    pub type SubnetRootAlphaOutflow<T: Config> =
+        StorageMap<_, Identity, NetUid, i64, ValueQuery, DefaultZeroI64<T>>;
+
+    /// EMA of root alpha inflow (claims) per subnet.
+    /// Tracks EMA of alpha claimed from root dividends (in alpha terms, no price multiplication).
+    #[pallet::storage]
+    pub type SubnetEmaRootAlphaInflow<T: Config> =
+        StorageMap<_, Identity, NetUid, (u64, I64F64), OptionQuery>;
+
+    /// EMA of root alpha outflow (sells) per subnet.
+    /// Tracks EMA of claimed root alpha that is sold/transferred (in alpha terms, no price multiplication).
+    #[pallet::storage]
+    pub type SubnetEmaRootAlphaOutflow<T: Config> =
+        StorageMap<_, Identity, NetUid, (u64, I64F64), OptionQuery>;
+
+    /// Tracks claimed root alpha per hotkey, coldkey, and netuid for EMA tracking.
+    /// Similar to RootClaimed, but unlike RootClaimed it is updated when actual alpha is given
+    /// to the coldkey (on claim_root) and when it leaves the wallet (unstake, transfer, etc.).
+    /// Unlike RootClaimed, we don't update it on staking in/out of hotkeys.
+    #[pallet::storage]
+    pub type RootClaimedForEma<T: Config> = StorageNMap<
+        _,
+        (
+            NMapKey<Identity, NetUid>,               // subnet
+            NMapKey<Blake2_128Concat, T::AccountId>, // hotkey
+            NMapKey<Blake2_128Concat, T::AccountId>, // coldkey
+        ),
+        AlphaCurrency,
+        ValueQuery,
+        DefaultZeroAlpha<T>,
+    >;
+
     /// Default value for flow cutoff.
     #[pallet::type_value]
     pub fn DefaultFlowCutoff<T: Config>() -> I64F64 {
@@ -1484,6 +1518,15 @@ pub mod pallet {
         29_597_889_189_277
     }
     #[pallet::type_value]
+    /// Default value for root alpha flow EMA smoothing.
+    pub fn DefaultRootAlphaFlowEmaSmoothingFactor<T: Config>() -> u64 {
+        // Example values:
+        //   half-life            factor value        i64 normalized (x 2^63)
+        //   216000 (1 month) --> 0.000003209009576 ( 29_597_889_189_277)
+        //    50400 (1 week)  --> 0.000013752825678 (126_847_427_788_335)
+        29_597_889_189_277
+    }
+    #[pallet::type_value]
     /// Flow EMA smoothing half-life.
     pub fn FlowHalfLife<T: Config>() -> u64 {
         216_000
@@ -1492,6 +1535,10 @@ pub mod pallet {
     /// --- ITEM --> Flow EMA smoothing factor (flow alpha), u64 normalized
     pub type FlowEmaSmoothingFactor<T: Config> =
         StorageValue<_, u64, ValueQuery, DefaultFlowEmaSmoothingFactor<T>>;
+    #[pallet::storage]
+    /// --- ITEM --> Root alpha flow EMA smoothing factor (flow alpha), u64 normalized
+    pub type RootAlphaFlowEmaSmoothingFactor<T: Config> =
+        StorageValue<_, u64, ValueQuery, DefaultRootAlphaFlowEmaSmoothingFactor<T>>;
 
     /// ============================
     /// ==== Global Parameters =====

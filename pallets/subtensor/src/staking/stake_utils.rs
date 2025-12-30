@@ -712,6 +712,9 @@ impl<T: Config> Pallet<T> {
             Self::increase_stake_for_hotkey_and_coldkey_on_subnet(hotkey, coldkey, netuid, refund);
         }
 
+        // Calculate actual outflow: if we got a refund, less claimed alpha was actually sold
+        let actual_sold = actual_alpha_decrease.saturating_sub(refund);
+
         // If this is a root-stake
         if netuid == NetUid::ROOT {
             // Adjust root claimed value for this hotkey and coldkey.
@@ -728,6 +731,21 @@ impl<T: Config> Pallet<T> {
 
         // Record TAO outflow
         Self::record_tao_outflow(netuid, swap_result.amount_paid_out.into());
+
+        // Record root alpha outflow for EMA calculation (only for non-root subnets)
+        // Decrease claimed alpha for EMA when alpha leaves wallet (FIFO-like: first alpha out is deemed claimed)
+        // Similar to how RootClaimed is adjusted, but we track actual alpha leaving
+        if netuid != NetUid::ROOT {
+            let claimed_outflow = Self::decrease_root_claimed_for_ema_when_alpha_leaves(
+                netuid,
+                hotkey,
+                coldkey,
+                actual_sold,
+            );
+            if !claimed_outflow.is_zero() {
+                Self::record_root_alpha_outflow(netuid, claimed_outflow);
+            }
+        }
 
         LastColdkeyHotkeyStakeBlock::<T>::insert(coldkey, hotkey, Self::get_current_block_as_u64());
 
@@ -870,6 +888,27 @@ impl<T: Config> Pallet<T> {
             netuid,
             actual_alpha_decrease,
         );
+
+        // Transfer claimed root alpha for EMA tracking (only for non-root subnets)
+        // FIFO-like transfer of claimed alpha: first alpha out is deemed as claimed alpha
+        // When alpha is transferred, it moves from origin to destination wallet (not sold, so no outflow recorded)
+        // Similar to how RootClaimed is adjusted, but we track actual alpha movement
+        // Note: All decreases to RootClaimedForEma happen only inside decrease_root_claimed_for_ema_when_alpha_leaves
+        if netuid != NetUid::ROOT {
+            let claimed_to_transfer = Self::decrease_root_claimed_for_ema_when_alpha_leaves(
+                netuid,
+                origin_hotkey,
+                origin_coldkey,
+                actual_alpha_moved,
+            );
+            if !claimed_to_transfer.is_zero() {
+                // Add to destination's claimed alpha for EMA (similar to RootClaimed transfer)
+                // No outflow recorded here since alpha is just moved between wallets, not sold
+                RootClaimedForEma::<T>::mutate((netuid, destination_hotkey, destination_coldkey), |root_claimed| {
+                    *root_claimed = root_claimed.saturating_add(claimed_to_transfer);
+                });
+            }
+        }
 
         // Calculate TAO equivalent based on current price (it is accurate because
         // there's no slippage in this move)
@@ -1263,6 +1302,31 @@ impl<T: Config> Pallet<T> {
         );
 
         Ok(())
+    }
+
+    /// Decreases root claimed alpha for EMA when alpha leaves the wallet.
+    /// Similar to remove_stake_adjust_root_claimed_for_hotkey_and_coldkey, but tracks actual alpha leaving.
+    /// Uses FIFO-like logic: first alpha out is deemed as claimed alpha.
+    /// Returns the amount of claimed alpha that was decreased (for use in transfers and EMA tracking).
+    pub fn decrease_root_claimed_for_ema_when_alpha_leaves(
+        netuid: NetUid,
+        hotkey: &T::AccountId,
+        coldkey: &T::AccountId,
+        alpha_leaving: AlphaCurrency,
+    ) -> AlphaCurrency {
+        // Get claimed alpha for this specific hotkey-coldkey pair (similar to RootClaimed::get)
+        let hotkey_claimed = RootClaimedForEma::<T>::get((netuid, hotkey, coldkey));
+        // FIFO-like: first alpha out is deemed as claimed alpha
+        let actual_outflow = hotkey_claimed.min(alpha_leaving);
+        
+        if !actual_outflow.is_zero() {
+            // Decrease claimed alpha for EMA (similar to RootClaimed::mutate)
+            RootClaimedForEma::<T>::mutate((netuid, hotkey, coldkey), |claimed| {
+                *claimed = claimed.saturating_sub(actual_outflow);
+            });
+        }
+        
+        actual_outflow
     }
 }
 

@@ -31,7 +31,9 @@ impl<T: Config + pallet_drand::Config> Pallet<T> {
         Self::try_set_pending_children(block_number);
         // --- 8. Run auto-claim root divs.
         Self::run_auto_claim_root_divs(last_block_hash);
-        // --- 9. Populate root coldkey maps.
+        // --- 9. Update root alpha flow EMAs for all subnets
+        Self::update_root_alpha_flow_emas();
+        // --- 10. Populate root coldkey maps.
         Self::populate_root_coldkey_staking_maps();
 
         // Return ok.
@@ -309,6 +311,16 @@ impl<T: Config + pallet_drand::Config> Pallet<T> {
             if let Err(e) = Self::reveal_crv3_commits_for_subnet(netuid) {
                 log::warn!("Failed to reveal commits for subnet {netuid} due to error: {e:?}");
             };
+        }
+    }
+
+    pub fn update_root_alpha_flow_emas() {
+        let subnets: Vec<NetUid> = Self::get_all_subnet_netuids();
+        for netuid in subnets.into_iter().filter(|netuid| *netuid != NetUid::ROOT) {
+            // Update root alpha inflow EMA (updates if needed based on block)
+            Self::get_ema_root_alpha_inflow(netuid);
+            // Update root alpha outflow EMA (updates if needed based on block)
+            Self::get_ema_root_alpha_outflow(netuid);
         }
     }
 }

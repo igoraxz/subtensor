@@ -190,6 +190,7 @@ impl<T: Config> Pallet<T> {
                 Alpha::<T>::remove((&hotkey, old_coldkey, netuid));
 
                 if new_alpha.saturating_add(old_alpha) > U64F64::from(0u64) {
+                    // Transfer root claimed (both RootClaimed and RootClaimedForEma) using helper function
                     Self::transfer_root_claimed_for_new_keys(
                         netuid,
                         &hotkey,

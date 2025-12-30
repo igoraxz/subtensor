@@ -55,6 +55,70 @@ impl<T: Config> Pallet<T> {
         SubnetTaoFlow::<T>::remove(netuid);
     }
 
+    pub fn record_root_alpha_inflow(netuid: NetUid, amount: AlphaCurrency) {
+        SubnetRootAlphaInflow::<T>::mutate(netuid, |flow| {
+            *flow = flow.saturating_add(u64::from(amount) as i64);
+        });
+    }
+
+    pub fn record_root_alpha_outflow(netuid: NetUid, amount: AlphaCurrency) {
+        SubnetRootAlphaOutflow::<T>::mutate(netuid, |flow| {
+            *flow = flow.saturating_sub(u64::from(amount) as i64);
+        });
+    }
+
+    pub fn reset_root_alpha_inflow(netuid: NetUid) {
+        SubnetRootAlphaInflow::<T>::remove(netuid);
+    }
+
+    pub fn reset_root_alpha_outflow(netuid: NetUid) {
+        SubnetRootAlphaOutflow::<T>::remove(netuid);
+    }
+
+    // Update SubnetEmaRootAlphaInflow if needed and return its value for the current block
+    pub fn get_ema_root_alpha_inflow(netuid: NetUid) -> I64F64 {
+        let current_block: u64 = Self::get_current_block_as_u64();
+        let block_flow = I64F64::saturating_from_num(SubnetRootAlphaInflow::<T>::get(netuid));
+        let (last_block, last_block_ema) =
+            SubnetEmaRootAlphaInflow::<T>::get(netuid).unwrap_or((0, I64F64::saturating_from_num(0)));
+
+        if last_block != current_block {
+            let flow_alpha = I64F64::saturating_from_num(RootAlphaFlowEmaSmoothingFactor::<T>::get())
+                .safe_div(I64F64::saturating_from_num(i64::MAX));
+            let one = I64F64::saturating_from_num(1);
+            let ema_flow = (one.saturating_sub(flow_alpha))
+                .saturating_mul(last_block_ema)
+                .saturating_add(flow_alpha.saturating_mul(block_flow));
+            SubnetEmaRootAlphaInflow::<T>::insert(netuid, (current_block, ema_flow));
+            Self::reset_root_alpha_inflow(netuid);
+            ema_flow
+        } else {
+            last_block_ema
+        }
+    }
+
+    // Update SubnetEmaRootAlphaOutflow if needed and return its value for the current block
+    pub fn get_ema_root_alpha_outflow(netuid: NetUid) -> I64F64 {
+        let current_block: u64 = Self::get_current_block_as_u64();
+        let block_flow = I64F64::saturating_from_num(SubnetRootAlphaOutflow::<T>::get(netuid));
+        let (last_block, last_block_ema) =
+            SubnetEmaRootAlphaOutflow::<T>::get(netuid).unwrap_or((0, I64F64::saturating_from_num(0)));
+
+        if last_block != current_block {
+            let flow_alpha = I64F64::saturating_from_num(RootAlphaFlowEmaSmoothingFactor::<T>::get())
+                .safe_div(I64F64::saturating_from_num(i64::MAX));
+            let one = I64F64::saturating_from_num(1);
+            let ema_flow = (one.saturating_sub(flow_alpha))
+                .saturating_mul(last_block_ema)
+                .saturating_add(flow_alpha.saturating_mul(block_flow));
+            SubnetEmaRootAlphaOutflow::<T>::insert(netuid, (current_block, ema_flow));
+            Self::reset_root_alpha_outflow(netuid);
+            ema_flow
+        } else {
+            last_block_ema
+        }
+    }
+
     // Update SubnetEmaTaoFlow if needed and return its value for
     // the current block
     #[allow(dead_code)]

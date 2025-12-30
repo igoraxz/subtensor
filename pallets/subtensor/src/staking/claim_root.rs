@@ -157,56 +157,27 @@ impl<T: Config> Pallet<T> {
             return; // no-op
         }
 
-        let swap = match root_claim_type {
-            RootClaimTypeEnum::Swap => true,
-            RootClaimTypeEnum::Keep => false,
-            RootClaimTypeEnum::KeepSubnets { subnets } => !subnets.contains(&netuid),
-        };
-
-        if swap {
-            // Increase stake on root. Swap the alpha owed to TAO
-            let owed_tao = match Self::swap_alpha_for_tao(
-                netuid,
-                owed_u64.into(),
-                T::SwapInterface::min_price::<TaoCurrency>(),
-                true,
-            ) {
-                Ok(owed_tao) => owed_tao,
-                Err(err) => {
-                    log::error!("Error swapping alpha for TAO: {err:?}");
-
-                    return;
-                }
-            };
-
-            Self::increase_stake_for_hotkey_and_coldkey_on_subnet(
-                hotkey,
-                coldkey,
-                NetUid::ROOT,
-                owed_tao.amount_paid_out.to_u64().into(),
-            );
-
-            Self::add_stake_adjust_root_claimed_for_hotkey_and_coldkey(
-                hotkey,
-                coldkey,
-                owed_tao.amount_paid_out.into(),
-            );
-        } else
-        /* Keep */
-        {
-            // Increase the stake with the alpha owned
-            Self::increase_stake_for_hotkey_and_coldkey_on_subnet(
-                hotkey,
-                coldkey,
-                netuid,
-                owed_u64.into(),
-            );
-        }
+        // Always keep alpha (no swap functionality)
+        // Increase the stake with the alpha owned
+        Self::increase_stake_for_hotkey_and_coldkey_on_subnet(
+            hotkey,
+            coldkey,
+            netuid,
+            owed_u64.into(),
+        );
 
         // Increase root claimed by owed amount.
         RootClaimed::<T>::mutate((netuid, hotkey, coldkey), |root_claimed| {
             *root_claimed = root_claimed.saturating_add(owed_u64.into());
         });
+
+        // Track claimed root alpha for EMA (similar to RootClaimed, but for EMA tracking)
+        RootClaimedForEma::<T>::mutate((netuid, hotkey, coldkey), |root_claimed| {
+            *root_claimed = root_claimed.saturating_add(owed_u64.into());
+        });
+
+        // Record root alpha inflow for EMA calculation (similar to record_tao_inflow)
+        Self::record_root_alpha_inflow(netuid, owed_u64.into());
     }
 
     fn root_claim_on_subnet_weight(_root_claim_type: RootClaimTypeEnum) -> Weight {
@@ -338,7 +309,12 @@ impl<T: Config> Pallet<T> {
         for i in coldkeys_to_claim.iter() {
             weight.saturating_accrue(T::DbWeight::get().reads(1));
             if let Ok(coldkey) = StakingColdkeysByIndex::<T>::try_get(i) {
-                weight.saturating_accrue(Self::do_root_claim(coldkey.clone(), None));
+                // Only auto-claim for coldkeys with AutoKeep setting
+                let root_claim_type = RootClaimType::<T>::get(&coldkey);
+                weight.saturating_accrue(T::DbWeight::get().reads(1));
+                if root_claim_type == RootClaimTypeEnum::AutoKeep {
+                    weight.saturating_accrue(Self::do_root_claim(coldkey.clone(), None));
+                }
             }
 
             continue;
@@ -369,6 +345,15 @@ impl<T: Config> Pallet<T> {
         RootClaimed::<T>::mutate((netuid, new_hotkey, new_coldkey), |new_root_claimed| {
             *new_root_claimed = old_root_claimed.saturating_add(*new_root_claimed);
         });
+
+        // Transfer root claimed for EMA (similar to RootClaimed transfer)
+        let old_root_claimed_for_ema = RootClaimedForEma::<T>::get((netuid, old_hotkey, old_coldkey));
+        if !old_root_claimed_for_ema.is_zero() {
+            RootClaimedForEma::<T>::remove((netuid, old_hotkey, old_coldkey));
+            RootClaimedForEma::<T>::mutate((netuid, new_hotkey, new_coldkey), |new_root_claimed_for_ema| {
+                *new_root_claimed_for_ema = old_root_claimed_for_ema.saturating_add(*new_root_claimed_for_ema);
+            });
+        }
     }
     pub fn transfer_root_claimable_for_new_hotkey(
         old_hotkey: &T::AccountId,
@@ -399,5 +384,7 @@ impl<T: Config> Pallet<T> {
         }
 
         let _ = RootClaimed::<T>::clear_prefix((netuid,), u32::MAX, None);
+        // Clear root claimed for EMA (similar to RootClaimed)
+        let _ = RootClaimedForEma::<T>::clear_prefix((netuid,), u32::MAX, None);
     }
 }
