@@ -25,6 +25,12 @@ impl<T: Config> Pallet<T> {
         log::debug!(
             "Running coinbase for block {current_block:?} with block emission: {block_emission:?}"
         );
+
+        // Reset per-block root sell counters from the previous block.
+        // Root sells (step 8 in block_step) happen after coinbase, so their
+        // accumulated values are consumed here at the start of the next block.
+        let _ = SubnetRootSellTao::<T>::clear(u32::MAX, None);
+
         // --- 1. Get all subnets (excluding root).
         let subnets: Vec<NetUid> = Self::get_all_subnet_netuids()
             .into_iter()
@@ -99,6 +105,11 @@ impl<T: Config> Pallet<T> {
             TotalStake::<T>::mutate(|total| {
                 *total = total.saturating_add(injected_tao);
             });
+
+            // Record protocol costs for net-tao-flow EMA.
+            SubnetExcessTao::<T>::insert(*netuid_i, tao_to_swap_with);
+            Self::record_protocol_inflow(*netuid_i, injected_tao);
+            Self::record_protocol_inflow(*netuid_i, tao_to_swap_with);
 
             // Update total TAO issuance.
             let difference_tao = tou64!(*excess_tao.get(netuid_i).unwrap_or(&asfloat!(0)));

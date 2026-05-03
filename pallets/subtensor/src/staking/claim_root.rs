@@ -179,6 +179,13 @@ impl<T: Config> Pallet<T> {
                 }
             };
 
+            // Record root sell as protocol outflow (reduces protocol cost).
+            let root_sell_tao: TaoBalance = owed_tao.amount_paid_out;
+            SubnetRootSellTao::<T>::mutate(netuid, |total| {
+                *total = total.saturating_add(root_sell_tao);
+            });
+            Self::record_protocol_outflow(netuid, root_sell_tao);
+
             Self::increase_stake_for_hotkey_and_coldkey_on_subnet(
                 hotkey,
                 coldkey,
