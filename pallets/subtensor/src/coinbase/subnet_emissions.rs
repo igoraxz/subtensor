@@ -217,22 +217,56 @@ impl<T: Config> Pallet<T> {
     #[allow(dead_code)]
     fn get_shares_flow(subnets_to_emit_to: &[NetUid]) -> BTreeMap<NetUid, U64F64> {
         let net_flow_enabled = NetTaoFlowEnabled::<T>::get();
+        let zero = I64F64::saturating_from_num(0);
 
-        // Always update the protocol EMA (keeps it warm for when toggled on)
-        let ema_flows: BTreeMap<NetUid, I64F64> = subnets_to_emit_to
+        // Collect user and protocol EMAs for all subnets.
+        let raw_emas: Vec<(NetUid, I64F64, I64F64)> = subnets_to_emit_to
             .iter()
             .map(|netuid| {
                 let user_ema = Self::get_ema_flow(*netuid);
                 let protocol_ema = Self::get_ema_protocol_flow(*netuid);
-                let net = if net_flow_enabled {
-                    user_ema.saturating_sub(protocol_ema)
-                } else {
-                    user_ema
-                };
-                (*netuid, net)
+                (*netuid, user_ema, protocol_ema)
             })
             .collect();
-        log::debug!("EMA flows (net_flow_enabled={net_flow_enabled}): {ema_flows:?}");
+
+        // When net flow is enabled, normalize protocol EMA so that
+        // sum(max(proto, 0)) = sum(max(user, 0)). This prevents subsidy
+        // concentration: as emissions concentrate on fewer subnets, their
+        // protocol EMA grows, but the normalization factor shrinks to
+        // compensate, keeping the deduction proportional to user demand.
+        let norm_factor = if net_flow_enabled {
+            let sum_pos_user: I64F64 = raw_emas.iter()
+                .map(|(_, u, _)| (*u).max(zero))
+                .fold(zero, |a, b| a.saturating_add(b));
+            let sum_pos_proto: I64F64 = raw_emas.iter()
+                .map(|(_, _, p)| (*p).max(zero))
+                .fold(zero, |a, b| a.saturating_add(b));
+            let one = I64F64::saturating_from_num(1);
+            if sum_pos_proto > zero {
+                sum_pos_user.safe_div(sum_pos_proto).min(one)
+            } else {
+                zero
+            }
+        } else {
+            zero
+        };
+        log::debug!("Protocol normalization factor: {norm_factor:?}");
+
+        let ema_flows: BTreeMap<NetUid, I64F64> = raw_emas
+            .into_iter()
+            .map(|(netuid, user_ema, protocol_ema)| {
+                // Only scale positive protocol cost by α. Negative protocol
+                // (root drain > emissions) is a benefit — kept at full value.
+                let scaled_proto = if protocol_ema > zero {
+                    norm_factor.saturating_mul(protocol_ema)
+                } else {
+                    protocol_ema
+                };
+                let net = user_ema.saturating_sub(scaled_proto);
+                (netuid, net)
+            })
+            .collect();
+        log::debug!("EMA flows: {ema_flows:?}");
 
         // Clip the EMA flow with lower limit L
         // z[i] = max{S[i] − L, 0}
