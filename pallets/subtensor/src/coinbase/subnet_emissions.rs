@@ -51,6 +51,45 @@ impl<T: Config> Pallet<T> {
         SubnetTaoFlow::<T>::remove(netuid);
     }
 
+    pub fn record_protocol_inflow(netuid: NetUid, tao: TaoBalance) {
+        SubnetProtocolFlow::<T>::mutate(netuid, |flow| {
+            *flow = flow.saturating_add(u64::from(tao) as i64);
+        });
+    }
+
+    pub fn record_protocol_outflow(netuid: NetUid, tao: TaoBalance) {
+        SubnetProtocolFlow::<T>::mutate(netuid, |flow| {
+            *flow = flow.saturating_sub(u64::from(tao) as i64);
+        });
+    }
+
+    pub fn reset_protocol_flow(netuid: NetUid) {
+        SubnetProtocolFlow::<T>::remove(netuid);
+    }
+
+    fn get_ema_protocol_flow(netuid: NetUid) -> I64F64 {
+        let current_block: u64 = Self::get_current_block_as_u64();
+
+        let block_flow = I64F64::saturating_from_num(SubnetProtocolFlow::<T>::get(netuid));
+        let (last_block, last_block_ema) =
+            SubnetEmaProtocolFlow::<T>::get(netuid).unwrap_or((0, I64F64::saturating_from_num(0)));
+
+        if last_block != current_block {
+            let flow_alpha = I64F64::saturating_from_num(FlowEmaSmoothingFactor::<T>::get())
+                .safe_div(I64F64::saturating_from_num(i64::MAX));
+            let one = I64F64::saturating_from_num(1);
+            let ema_flow = (one.saturating_sub(flow_alpha))
+                .saturating_mul(last_block_ema)
+                .saturating_add(flow_alpha.saturating_mul(block_flow));
+            SubnetEmaProtocolFlow::<T>::insert(netuid, (current_block, ema_flow));
+
+            Self::reset_protocol_flow(netuid);
+            ema_flow
+        } else {
+            last_block_ema
+        }
+    }
+
     // Update SubnetEmaTaoFlow if needed and return its value for
     // the current block
     #[allow(dead_code)]
@@ -177,10 +216,55 @@ impl<T: Config> Pallet<T> {
     // Implementation of shares that uses TAO flow
     #[allow(dead_code)]
     fn get_shares_flow(subnets_to_emit_to: &[NetUid]) -> BTreeMap<NetUid, U64F64> {
-        // Get raw flows
-        let ema_flows = subnets_to_emit_to
+        let net_flow_enabled = NetTaoFlowEnabled::<T>::get();
+        let zero = I64F64::saturating_from_num(0);
+
+        // Collect user and protocol EMAs for all subnets.
+        let raw_emas: Vec<(NetUid, I64F64, I64F64)> = subnets_to_emit_to
             .iter()
-            .map(|netuid| (*netuid, Self::get_ema_flow(*netuid)))
+            .map(|netuid| {
+                let user_ema = Self::get_ema_flow(*netuid);
+                let protocol_ema = Self::get_ema_protocol_flow(*netuid);
+                (*netuid, user_ema, protocol_ema)
+            })
+            .collect();
+
+        // When net flow is enabled, normalize protocol EMA so that
+        // sum(max(proto, 0)) = sum(max(user, 0)). This prevents subsidy
+        // concentration: as emissions concentrate on fewer subnets, their
+        // protocol EMA grows, but the normalization factor shrinks to
+        // compensate, keeping the deduction proportional to user demand.
+        let norm_factor = if net_flow_enabled {
+            let sum_pos_user: I64F64 = raw_emas.iter()
+                .map(|(_, u, _)| (*u).max(zero))
+                .fold(zero, |a, b| a.saturating_add(b));
+            let sum_pos_proto: I64F64 = raw_emas.iter()
+                .map(|(_, _, p)| (*p).max(zero))
+                .fold(zero, |a, b| a.saturating_add(b));
+            let one = I64F64::saturating_from_num(1);
+            if sum_pos_proto > zero {
+                sum_pos_user.safe_div(sum_pos_proto).min(one)
+            } else {
+                zero
+            }
+        } else {
+            zero
+        };
+        log::debug!("Protocol normalization factor: {norm_factor:?}");
+
+        let ema_flows: BTreeMap<NetUid, I64F64> = raw_emas
+            .into_iter()
+            .map(|(netuid, user_ema, protocol_ema)| {
+                // Only scale positive protocol cost by α. Negative protocol
+                // (root drain > emissions) is a benefit — kept at full value.
+                let scaled_proto = if protocol_ema > zero {
+                    norm_factor.saturating_mul(protocol_ema)
+                } else {
+                    protocol_ema
+                };
+                let net = user_ema.saturating_sub(scaled_proto);
+                (netuid, net)
+            })
             .collect();
         log::debug!("EMA flows: {ema_flows:?}");
 
