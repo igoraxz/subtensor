@@ -213,32 +213,59 @@ impl<T: Config> Pallet<T> {
         }
     }
 
+    /// Compute slow EMA of the raw user flow EMA (second smoothing layer).
+    /// Stores EMA(raw), not the clamped min(raw, slow).
+    /// On first call for a subnet, initializes to the current raw EMA to avoid cliff.
+    fn get_slow_ema_flow(netuid: NetUid, raw_ema: I64F64) -> I64F64 {
+        let current_block: u64 = Self::get_current_block_as_u64();
+
+        let (last_block, last_slow_ema) = SubnetEmaSlowTaoFlow::<T>::get(netuid)
+            .unwrap_or((current_block, raw_ema));
+
+        if last_block != current_block {
+            let flow_alpha = I64F64::saturating_from_num(FlowEmaSmoothingFactor::<T>::get())
+                .safe_div(I64F64::saturating_from_num(i64::MAX));
+            let one = I64F64::saturating_from_num(1);
+            let slow_ema = (one.saturating_sub(flow_alpha))
+                .saturating_mul(last_slow_ema)
+                .saturating_add(flow_alpha.saturating_mul(raw_ema));
+            SubnetEmaSlowTaoFlow::<T>::insert(netuid, (current_block, slow_ema));
+            slow_ema
+        } else {
+            last_slow_ema
+        }
+    }
+
     // Implementation of shares that uses TAO flow
     #[allow(dead_code)]
     fn get_shares_flow(subnets_to_emit_to: &[NetUid]) -> BTreeMap<NetUid, U64F64> {
         let net_flow_enabled = NetTaoFlowEnabled::<T>::get();
         let zero = I64F64::saturating_from_num(0);
 
-        // Collect user and protocol EMAs for all subnets.
-        let raw_emas: Vec<(NetUid, I64F64, I64F64)> = subnets_to_emit_to
+        // Collect raw user EMA, slow EMA (for maturity), and protocol EMA.
+        // matured = min(raw, slow): buys get delayed credit, sells debit immediately.
+        let subnet_emas: Vec<(NetUid, I64F64, I64F64)> = subnets_to_emit_to
             .iter()
             .map(|netuid| {
-                let user_ema = Self::get_ema_flow(*netuid);
+                let raw_user_ema = Self::get_ema_flow(*netuid);
+                let slow_user_ema = Self::get_slow_ema_flow(*netuid, raw_user_ema);
+                let matured_user_ema = raw_user_ema.min(slow_user_ema);
                 let protocol_ema = Self::get_ema_protocol_flow(*netuid);
-                (*netuid, user_ema, protocol_ema)
+                (*netuid, matured_user_ema, protocol_ema)
             })
             .collect();
 
         // When net flow is enabled, normalize protocol EMA so that
-        // sum(max(proto, 0)) = sum(max(user, 0)). This prevents subsidy
+        // sum(max(proto, 0)) = sum(max(matured_user, 0)). This prevents subsidy
         // concentration: as emissions concentrate on fewer subnets, their
         // protocol EMA grows, but the normalization factor shrinks to
         // compensate, keeping the deduction proportional to user demand.
+        // Uses matured user EMA in the numerator so α matches the signal basis.
         let norm_factor = if net_flow_enabled {
-            let sum_pos_user: I64F64 = raw_emas.iter()
+            let sum_pos_user: I64F64 = subnet_emas.iter()
                 .map(|(_, u, _)| (*u).max(zero))
                 .fold(zero, |a, b| a.saturating_add(b));
-            let sum_pos_proto: I64F64 = raw_emas.iter()
+            let sum_pos_proto: I64F64 = subnet_emas.iter()
                 .map(|(_, _, p)| (*p).max(zero))
                 .fold(zero, |a, b| a.saturating_add(b));
             let one = I64F64::saturating_from_num(1);
@@ -252,9 +279,9 @@ impl<T: Config> Pallet<T> {
         };
         log::debug!("Protocol normalization factor: {norm_factor:?}");
 
-        let ema_flows: BTreeMap<NetUid, I64F64> = raw_emas
+        let ema_flows: BTreeMap<NetUid, I64F64> = subnet_emas
             .into_iter()
-            .map(|(netuid, user_ema, protocol_ema)| {
+            .map(|(netuid, matured_user_ema, protocol_ema)| {
                 // Only scale positive protocol cost by α. Negative protocol
                 // (root drain > emissions) is a benefit — kept at full value.
                 let scaled_proto = if protocol_ema > zero {
@@ -262,7 +289,7 @@ impl<T: Config> Pallet<T> {
                 } else {
                     protocol_ema
                 };
-                let net = user_ema.saturating_sub(scaled_proto);
+                let net = matured_user_ema.saturating_sub(scaled_proto);
                 (netuid, net)
             })
             .collect();

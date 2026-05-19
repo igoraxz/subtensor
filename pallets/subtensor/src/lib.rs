@@ -1581,9 +1581,15 @@ pub mod pallet {
     pub type SubnetTaoFlow<T: Config> =
         StorageMap<_, Identity, NetUid, i64, ValueQuery, DefaultZeroI64<T>>;
 
-    /// --- MAP ( netuid ) --> subnet_ema_tao_flow | Returns the EMA of TAO inflow-outflow balance.
+    /// --- MAP ( netuid ) --> subnet_ema_tao_flow | Returns the EMA of TAO inflow-outflow balance (raw user flow).
     #[pallet::storage]
     pub type SubnetEmaTaoFlow<T: Config> =
+        StorageMap<_, Identity, NetUid, (u64, I64F64), OptionQuery>;
+
+    /// --- MAP ( netuid ) --> subnet_ema_slow_tao_flow | Slow EMA of raw user flow EMA (second smoothing layer).
+    /// Used for maturity clamp: matured = min(raw, slow). Stores EMA(raw), NOT min(raw, slow).
+    #[pallet::storage]
+    pub type SubnetEmaSlowTaoFlow<T: Config> =
         StorageMap<_, Identity, NetUid, (u64, I64F64), OptionQuery>;
 
     /// --- ITEM --> net_tao_flow_enabled | When true, emission shares use net flow (user - protocol). When false, uses gross user flow only.
