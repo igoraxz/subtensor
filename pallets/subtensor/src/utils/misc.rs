@@ -923,6 +923,11 @@ impl<T: Config> Pallet<T> {
         NetTaoFlowEnabled::<T>::set(enabled);
     }
 
+    /// Enables or disables counting miner emission as virtual user outflow in net flow.
+    pub fn set_miner_incentive_flow_enabled(enabled: bool) {
+        MinerIncentiveFlowEnabled::<T>::set(enabled);
+    }
+
     /// Multiply an integer `value` by a Q32 fixed-point factor.
     ///
     /// Q32 means:

@@ -2027,6 +2027,24 @@ pub mod pallet {
             Ok(())
         }
 
+        /// Enables or disables counting miner emission as virtual user outflow in net flow.
+        /// When enabled, miner emission (all UIDs) is valued at the moving alpha price and
+        /// subtracted from the subnet's user flow EMA, with the count reversed when miner-origin
+        /// alpha is genuinely sold.
+        #[pallet::call_index(96)]
+        #[pallet::weight(Weight::from_parts(7_343_000, 0)
+        .saturating_add(<T as frame_system::Config>::DbWeight::get().reads(0))
+        .saturating_add(<T as frame_system::Config>::DbWeight::get().writes(1)))]
+        pub fn sudo_set_miner_incentive_flow_enabled(
+            origin: OriginFor<T>,
+            enabled: bool,
+        ) -> DispatchResult {
+            ensure_root(origin)?;
+            pallet_subtensor::Pallet::<T>::set_miner_incentive_flow_enabled(enabled);
+            log::debug!("set_miner_incentive_flow_enabled( {enabled:?} ) ");
+            Ok(())
+        }
+
         /// Sets the global maximum number of mechanisms in a subnet
         #[pallet::call_index(88)]
         #[pallet::weight(Weight::from_parts(15_000_000, 0)

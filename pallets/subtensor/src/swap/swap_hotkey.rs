@@ -571,12 +571,15 @@ impl<T: Config> Pallet<T> {
             for coldkey in unique_coldkeys {
                 let alpha_old =
                     Self::get_stake_for_hotkey_and_coldkey_on_subnet(old_hotkey, &coldkey, netuid);
-                Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(
+                let delta_credit = Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(
                     old_hotkey, &coldkey, netuid, alpha_old,
                 );
                 Self::increase_stake_for_hotkey_and_coldkey_on_subnet(
                     new_hotkey, &coldkey, netuid, alpha_old,
                 );
+                // Carry miner-origin credit to the new hotkey position (hotkey swap is not a
+                // sale); merges into any existing credit there.
+                Self::add_miner_origin_credit(netuid, new_hotkey, &coldkey, delta_credit);
                 weight.saturating_accrue(T::DbWeight::get().reads_writes(2, 2));
 
                 let mut staking_hotkeys = StakingHotkeys::<T>::get(&coldkey);
