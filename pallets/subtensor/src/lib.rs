@@ -1656,6 +1656,47 @@ pub mod pallet {
     pub type SubnetEmaProtocolFlow<T: Config> =
         StorageMap<_, Identity, NetUid, (u64, I64F64), OptionQuery>;
 
+    /// --- MAP ( netuid ) --> subnet_miner_incentive_flow | Signed per-block accumulator for miner
+    /// emission counted as virtual outflow (all UIDs, valued in TAO at the moving price). Reduced
+    /// (may go negative within a block) when miner-origin alpha is genuinely sold, reversing the
+    /// at-emission count so the same emission is not counted twice.
+    #[pallet::storage]
+    pub type SubnetMinerIncentiveFlow<T: Config> =
+        StorageMap<_, Identity, NetUid, i64, ValueQuery, DefaultZeroI64<T>>;
+
+    /// --- MAP ( netuid ) --> subnet_ema_miner_incentive_flow | EMA of the per-block miner-incentive
+    /// flow accumulator (emission counted at the moving price, minus reversals on genuine sale),
+    /// same smoothing as SubnetEmaTaoFlow.
+    #[pallet::storage]
+    pub type SubnetEmaMinerIncentiveFlow<T: Config> =
+        StorageMap<_, Identity, NetUid, (u64, I64F64), OptionQuery>;
+
+    /// --- NMAP ( netuid, hotkey, coldkey ) --> miner_origin_credit | TAO already counted as
+    /// miner-emission outflow for the miner-origin alpha still held on this position. Reduced
+    /// pro-rata whenever the position's alpha leaves; on a genuine sale the consumed credit is
+    /// reversed out of SubnetMinerIncentiveFlow so the same emission is not counted twice.
+    #[pallet::storage]
+    pub type MinerOriginCredit<T: Config> = StorageNMap<
+        _,
+        (
+            NMapKey<Identity, NetUid>,                // subnet (first, for dereg clear_prefix)
+            NMapKey<Blake2_128Concat, T::AccountId>,  // hotkey
+            NMapKey<Blake2_128Concat, T::AccountId>,  // coldkey
+        ),
+        TaoBalance,
+        ValueQuery,
+        DefaultZeroTao<T>,
+    >;
+
+    /// --- ITEM --> miner_incentive_flow_enabled | When true, miner emission counts as virtual user outflow in net flow.
+    #[pallet::type_value]
+    pub fn DefaultMinerIncentiveFlowEnabled<T: Config>() -> bool {
+        true
+    }
+    #[pallet::storage]
+    pub type MinerIncentiveFlowEnabled<T: Config> =
+        StorageValue<_, bool, ValueQuery, DefaultMinerIncentiveFlowEnabled<T>>;
+
     /// Default value for flow cutoff.
     #[pallet::type_value]
     pub fn DefaultFlowCutoff<T: Config>() -> I64F64 {

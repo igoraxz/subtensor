@@ -93,6 +93,103 @@ impl<T: Config> Pallet<T> {
         SubnetProtocolFlow::<T>::remove(netuid);
     }
 
+    /// Count miner emission as virtual user outflow at emission (all UIDs, valued in TAO at the
+    /// moving price). Added to the signed per-block accumulator.
+    pub fn record_miner_incentive_outflow(netuid: NetUid, tao: TaoBalance) {
+        SubnetMinerIncentiveFlow::<T>::mutate(netuid, |flow| {
+            *flow = flow.saturating_add(u64::from(tao) as i64);
+        });
+    }
+
+    /// Reverse previously-counted miner-emission outflow (when miner-origin alpha is genuinely
+    /// sold, the real sell already hits the user-flow outflow, so the at-emission count is undone
+    /// to avoid double-counting). The per-block accumulator is signed and may go negative.
+    pub fn record_miner_incentive_inflow(netuid: NetUid, tao: TaoBalance) {
+        SubnetMinerIncentiveFlow::<T>::mutate(netuid, |flow| {
+            *flow = flow.saturating_sub(u64::from(tao) as i64);
+        });
+    }
+
+    /// Add miner-origin outflow credit to a position (TAO counted at emission for alpha staked
+    /// to a real miner wallet).
+    pub fn add_miner_origin_credit(
+        netuid: NetUid,
+        hotkey: &T::AccountId,
+        coldkey: &T::AccountId,
+        tao: TaoBalance,
+    ) {
+        if tao.is_zero() {
+            return;
+        }
+        MinerOriginCredit::<T>::mutate((netuid, hotkey, coldkey), |c| {
+            *c = c.saturating_add(tao);
+        });
+    }
+
+    /// Consume miner-origin credit pro-rata when `removed` alpha leaves a position holding
+    /// `alpha_before` alpha. Returns the TAO credit consumed (delta-C). Pro-rata is the precise
+    /// convention for fungible share-pool alpha and is robust to appreciation/dilution (it never
+    /// needs a clamp). Floors the consumed amount so any rounding leaves credit on the position
+    /// (conservative: never under-counts future outflow).
+    pub fn consume_miner_origin_credit(
+        netuid: NetUid,
+        hotkey: &T::AccountId,
+        coldkey: &T::AccountId,
+        removed: AlphaBalance,
+        alpha_before: AlphaBalance,
+    ) -> TaoBalance {
+        let before = u64::from(alpha_before);
+        let rem = u64::from(removed).min(before);
+        if before == 0 || rem == 0 {
+            return TaoBalance::ZERO;
+        }
+        let key = (netuid, hotkey.clone(), coldkey.clone());
+        let credit = u64::from(MinerOriginCredit::<T>::get(&key));
+        if credit == 0 {
+            return TaoBalance::ZERO;
+        }
+        // delta = floor(credit * rem / before)
+        let delta = (credit as u128)
+            .saturating_mul(rem as u128)
+            .checked_div(before as u128)
+            .unwrap_or(0) as u64;
+        let delta = delta.min(credit);
+        let new_credit = credit.saturating_sub(delta);
+        if new_credit == 0 {
+            MinerOriginCredit::<T>::remove(&key);
+        } else {
+            MinerOriginCredit::<T>::insert(&key, TaoBalance::from(new_credit));
+        }
+        TaoBalance::from(delta)
+    }
+
+    pub fn reset_miner_incentive_flow(netuid: NetUid) {
+        SubnetMinerIncentiveFlow::<T>::remove(netuid);
+    }
+
+    fn update_ema_miner_incentive_flow(netuid: NetUid) -> I64F64 {
+        let current_block: u64 = Self::get_current_block_as_u64();
+
+        let block_flow = I64F64::saturating_from_num(SubnetMinerIncentiveFlow::<T>::get(netuid));
+        let (last_block, last_block_ema) = SubnetEmaMinerIncentiveFlow::<T>::get(netuid)
+            .unwrap_or((0, I64F64::saturating_from_num(0)));
+
+        if last_block != current_block {
+            let flow_alpha = I64F64::saturating_from_num(FlowEmaSmoothingFactor::<T>::get())
+                .safe_div(I64F64::saturating_from_num(i64::MAX));
+            let one = I64F64::saturating_from_num(1);
+            let ema_flow = (one.saturating_sub(flow_alpha))
+                .saturating_mul(last_block_ema)
+                .saturating_add(flow_alpha.saturating_mul(block_flow));
+            SubnetEmaMinerIncentiveFlow::<T>::insert(netuid, (current_block, ema_flow));
+
+            Self::reset_miner_incentive_flow(netuid);
+            ema_flow
+        } else {
+            last_block_ema
+        }
+    }
+
     fn update_ema_protocol_flow(netuid: NetUid) -> I64F64 {
         let current_block: u64 = Self::get_current_block_as_u64();
 
@@ -245,37 +342,49 @@ impl<T: Config> Pallet<T> {
         let net_flow_enabled = NetTaoFlowEnabled::<T>::get();
         let zero = I64F64::saturating_from_num(0);
 
-        // Always update both EMAs (keeps protocol EMA warm for when toggled on).
-        // Fixes #2667: protocol EMA accumulator was only drained when enabled,
-        // causing a shock on toggle.
-        let subnet_emas: Vec<(NetUid, I64F64, I64F64)> = subnets_to_emit_to
+        // Drain all three flow EMAs every block (user, miner-incentive, protocol) so each stays
+        // warm and is drained regardless of toggle state. Fixes #2667: a flow accumulator drained
+        // only while its feature was enabled caused a shock on toggle.
+        // `miner_on`: when enabled, miner incentive (all UIDs) is a cost alongside protocol cost.
+        let miner_incentive_enabled = MinerIncentiveFlowEnabled::<T>::get();
+        let miner_on = net_flow_enabled && miner_incentive_enabled;
+        let subnet_emas: Vec<(NetUid, I64F64, I64F64, I64F64)> = subnets_to_emit_to
             .iter()
             .map(|netuid| {
                 let user_ema = Self::get_ema_flow(*netuid);
+                let miner_incentive_ema = Self::update_ema_miner_incentive_flow(*netuid);
                 let protocol_ema = Self::update_ema_protocol_flow(*netuid);
-                (*netuid, user_ema, protocol_ema)
+                (*netuid, user_ema, protocol_ema, miner_incentive_ema)
             })
             .collect();
 
-        // When net flow is enabled, normalize protocol EMA so that its
-        // positive total matches the user EMA positive total. This prevents
-        // subsidy concentration: as emissions concentrate on fewer subnets,
-        // their protocol EMA grows, but the normalization factor shrinks to
-        // compensate, keeping the deduction proportional to user demand.
+        // Cost normalization. Both the protocol cost and the miner-incentive cost are discounted
+        // by ONE shared factor before being subtracted from user flow:
+        //
+        //   factor = sum_i max(user_i,0) / sum_i ( max(protocol_i,0) + max(miner_i,0) )   (<= 1)
+        //
+        // i.e. the total cost charged across all subnets is capped at total positive user demand,
+        // split pro-rata by each subnet's (protocol + miner) cost. This keeps the deduction
+        // proportional to demand and prevents the (large) miner-incentive term from pushing most
+        // subnets below the eligibility floor. Consequence: as the combined cost grows the factor
+        // shrinks, so the miner penalty is RELATIVE -- it redistributes emission share toward
+        // low-miner-emission subnets rather than applying an absolute, un-normalized deduction.
         let norm_factor = if net_flow_enabled {
-            let (user_positive_ema_sum, protocol_positive_ema_sum) =
+            let (user_positive_ema_sum, cost_positive_ema_sum) =
                 subnet_emas
                     .iter()
-                    .fold((zero, zero), |(su, sp), (_, u, p)| {
-                        (
-                            su.saturating_add((*u).max(zero)),
-                            sp.saturating_add((*p).max(zero)),
-                        )
+                    .fold((zero, zero), |(su, sc), (_, u, p, m)| {
+                        let cost = (*p).max(zero).saturating_add(if miner_on {
+                            (*m).max(zero)
+                        } else {
+                            zero
+                        });
+                        (su.saturating_add((*u).max(zero)), sc.saturating_add(cost))
                     });
             let one = I64F64::saturating_from_num(1);
-            if protocol_positive_ema_sum > zero {
+            if cost_positive_ema_sum > zero {
                 user_positive_ema_sum
-                    .safe_div(protocol_positive_ema_sum)
+                    .safe_div(cost_positive_ema_sum)
                     .min(one)
             } else {
                 zero
@@ -283,20 +392,31 @@ impl<T: Config> Pallet<T> {
         } else {
             zero
         };
-        log::debug!("Protocol normalization factor: {norm_factor:?}");
+        log::debug!("Net flow normalization factor (protocol+miner): {norm_factor:?}");
 
         let ema_flows: BTreeMap<NetUid, I64F64> = subnet_emas
             .into_iter()
-            .map(|(netuid, user_ema, protocol_ema)| {
+            .map(|(netuid, user_ema, protocol_ema, miner_incentive_ema)| {
                 let net = if net_flow_enabled {
-                    // Only scale positive protocol cost by norm_factor. Negative
-                    // protocol cost (root drain > emissions) is a benefit, kept as-is.
+                    // Scale the positive protocol and miner-incentive costs by the same factor.
+                    // Negative protocol cost (root drain > emissions) is a real benefit, kept
+                    // as-is. Negative miner-incentive EMA is floored to 0 -- NOT a benefit: a
+                    // net-negative means more miner-origin alpha was sold than freshly emitted,
+                    // and that sale already hit user flow as real outflow, so crediting it here
+                    // would double-count.
                     let scaled_protocol = if protocol_ema > zero {
                         norm_factor.saturating_mul(protocol_ema)
                     } else {
                         protocol_ema
                     };
-                    user_ema.saturating_sub(scaled_protocol)
+                    let scaled_miner = if miner_on && miner_incentive_ema > zero {
+                        norm_factor.saturating_mul(miner_incentive_ema)
+                    } else {
+                        zero
+                    };
+                    user_ema
+                        .saturating_sub(scaled_protocol)
+                        .saturating_sub(scaled_miner)
                 } else {
                     user_ema
                 };

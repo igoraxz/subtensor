@@ -92,7 +92,7 @@ impl<T: Config> Pallet<T> {
             // Swap
             let alpha_old =
                 Self::get_stake_for_hotkey_and_coldkey_on_subnet(&hotkey, old_coldkey, netuid);
-            Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(
+            let delta_credit = Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(
                 &hotkey,
                 old_coldkey,
                 netuid,
@@ -104,6 +104,8 @@ impl<T: Config> Pallet<T> {
                 netuid,
                 alpha_old,
             );
+            // Carry miner-origin credit to the new coldkey position (coldkey swap is not a sale).
+            Self::add_miner_origin_credit(netuid, &hotkey, new_coldkey, delta_credit);
             let new_dest_alpha =
                 Self::get_stake_for_hotkey_and_coldkey_on_subnet(&hotkey, new_coldkey, netuid);
 

@@ -300,6 +300,9 @@ impl<T: Config> Pallet<T> {
         SubnetEmaTaoFlow::<T>::remove(netuid);
         SubnetProtocolFlow::<T>::remove(netuid);
         SubnetEmaProtocolFlow::<T>::remove(netuid);
+        SubnetMinerIncentiveFlow::<T>::remove(netuid);
+        SubnetEmaMinerIncentiveFlow::<T>::remove(netuid);
+        let _ = MinerOriginCredit::<T>::clear_prefix((netuid,), u32::MAX, None);
         SubnetExcessTao::<T>::remove(netuid);
         SubnetRootSellTao::<T>::remove(netuid);
         SubnetTaoProvided::<T>::remove(netuid);

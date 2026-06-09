@@ -614,12 +614,26 @@ impl<T: Config> Pallet<T> {
         for (hotkey, incentive) in incentives {
             log::debug!("incentives: hotkey: {incentive:?}");
 
-            // Skip/burn miner-emission for immune keys
+            // Count every miner incentive (all UIDs) as virtual user outflow at emission:
+            // emission to a wallet the subnet controls and holds gives an emission-share
+            // advantage with no sell pressure, regardless of which UID receives it.
+            // Value the alpha at the moving (EMA) price, which is smoothed over a window and so
+            // cannot be shifted by a flash dump/pump at the epoch block (resists manipulation in
+            // both directions). When the alpha later reaches a real seller, the credit recorded
+            // below is reversed on that sale so the same emission is not counted twice.
+            let miner_outflow_tao: u64 = Self::get_moving_alpha_price(netuid)
+                .saturating_mul(U96F32::saturating_from_num(incentive))
+                .saturating_to_num::<u64>();
+            Self::record_miner_incentive_outflow(netuid, TaoBalance::from(miner_outflow_tao));
+
+            // Owner/associated hotkeys: the emission is already counted as outflow above; do not
+            // stake it to a wallet -- recycle or burn the alpha instead (no credit, never sold).
             if owner_hotkeys.contains(&hotkey) {
                 log::debug!(
                     "incentives: hotkey: {hotkey:?} is SN owner hotkey or associated hotkey, skipping {incentive:?}"
                 );
-                // Check if we should recycle or burn the incentive
+                // Burned/recycled: alpha is destroyed, never reaches a position, so no credit is
+                // recorded -- the at-emission outflow stands permanently (never reversed).
                 match RecycleOrBurn::<T>::try_get(netuid) {
                     Ok(RecycleOrBurnEnum::Recycle) => {
                         log::debug!("recycling {incentive:?}");
@@ -656,6 +670,9 @@ impl<T: Config> Pallet<T> {
                 netuid,
                 incentive,
             );
+            // Tag the staked alpha with the TAO already counted as outflow at emission, so its
+            // eventual genuine sale reverses the count (pro-rata) instead of double-counting.
+            Self::add_miner_origin_credit(netuid, &destination, &owner, TaoBalance::from(miner_outflow_tao));
         }
 
         // Distribute alpha divs.

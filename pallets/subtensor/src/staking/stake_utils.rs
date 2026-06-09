@@ -612,22 +612,38 @@ impl<T: Config> Pallet<T> {
     /// * `hotkey` - The account ID of the hotkey.
     /// * `coldkey` - The account ID of the coldkey (owner).
     /// * `netuid` - The unique identifier of the subnet.
-    /// * `amount` - The amount of alpha to be added.
+    /// * `amount` - The amount of alpha to be removed.
     ///
+    /// Returns the miner-origin outflow credit consumed pro-rata by this decrease (delta-C, in
+    /// TAO). Callers route it: a genuine sale reverses it out of SubnetMinerIncentiveFlow; a transfer
+    /// or key-swap carries it to the destination position; burn/recycle/dust/AMM-liquidity removal
+    /// discard it (the at-emission count stands). Callers that don't move alpha to another position
+    /// can ignore it.
     pub fn decrease_stake_for_hotkey_and_coldkey_on_subnet(
         hotkey: &T::AccountId,
         coldkey: &T::AccountId,
         netuid: NetUid,
         amount: AlphaBalance,
-    ) {
+    ) -> TaoBalance {
         let mut alpha_share_pool = Self::get_alpha_share_pool(hotkey.clone(), netuid);
-        let amount = amount.to_u64();
+        let amount_u = amount.to_u64();
 
         // We expect a negative value here
         if let Ok(value) = alpha_share_pool.try_get_value(coldkey)
-            && value >= amount
+            && value >= amount_u
         {
-            alpha_share_pool.update_value_for_one(coldkey, (amount as i64).neg());
+            // Consume miner-origin credit pro-rata against pre-decrease holdings.
+            let delta_c = Self::consume_miner_origin_credit(
+                netuid,
+                hotkey,
+                coldkey,
+                amount,
+                AlphaBalance::from(value),
+            );
+            alpha_share_pool.update_value_for_one(coldkey, (amount_u as i64).neg());
+            delta_c
+        } else {
+            TaoBalance::ZERO
         }
     }
 
@@ -747,8 +763,9 @@ impl<T: Config> Pallet<T> {
         price_limit: TaoBalance,
         drop_fees: bool,
     ) -> Result<TaoBalance, DispatchError> {
-        //  Decrease alpha on subnet
-        Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(hotkey, coldkey, netuid, alpha);
+        //  Decrease alpha on subnet (consumes miner-origin outflow credit pro-rata)
+        let delta_credit =
+            Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(hotkey, coldkey, netuid, alpha);
 
         // Swap the alpha for TAO.
         let swap_result = Self::swap_alpha_for_tao(netuid, alpha, price_limit, drop_fees)?;
@@ -762,6 +779,37 @@ impl<T: Config> Pallet<T> {
         );
         if !refund.is_zero() {
             Self::increase_stake_for_hotkey_and_coldkey_on_subnet(hotkey, coldkey, netuid, refund);
+        }
+
+        // The decrease consumed credit for the full `alpha`; restore the portion of credit for
+        // any refunded (un-sold) alpha so only the genuinely sold portion is reversed below.
+        let alpha_u = u64::from(alpha);
+        let sold_credit: u64 = if alpha_u == 0 {
+            0
+        } else {
+            let dc = u64::from(delta_credit);
+            // Restore credit for the refunded (un-sold) alpha, rounding UP so that the reversed
+            // `sold_credit` is rounded DOWN -- strictly conservative (never reverses more than the
+            // genuinely-sold fraction, i.e. never under-counts outflow).
+            let restore = ((dc as u128).saturating_mul(u64::from(refund) as u128))
+                .saturating_add(alpha_u as u128 - 1)
+                .checked_div(alpha_u as u128)
+                .unwrap_or(0)
+                .min(dc as u128) as u64;
+            if restore > 0 {
+                Self::add_miner_origin_credit(netuid, hotkey, coldkey, TaoBalance::from(restore));
+            }
+            dc.saturating_sub(restore)
+        };
+        // Reverse the at-emission count for the sold miner-origin alpha: its real sale is recorded
+        // as user outflow below, so the emission-time count must be undone to avoid double-count.
+        // The reversal uses the emission-time valuation (the stored credit), while the real sale
+        // records realized TAO; the difference is genuine price drift and is intended to remain.
+        if sold_credit > 0 {
+            log::debug!(
+                "miner incentive flow: reversing {sold_credit:?} (sold miner-origin alpha) for netuid={netuid:?}"
+            );
+            Self::record_miner_incentive_inflow(netuid, TaoBalance::from(sold_credit));
         }
 
         // Transfer unstaked TAO from subnet account to the coldkey.
@@ -963,8 +1011,8 @@ impl<T: Config> Pallet<T> {
         // Transfer lock (may fail if destination coldkey has a conflicting lock)
         Self::transfer_lock(origin_coldkey, destination_coldkey, netuid, alpha)?;
 
-        // Decrease alpha on origin keys
-        Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(
+        // Decrease alpha on origin keys (consumes miner-origin credit pro-rata)
+        let delta_credit = Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(
             origin_hotkey,
             origin_coldkey,
             netuid,
@@ -985,6 +1033,9 @@ impl<T: Config> Pallet<T> {
             netuid,
             alpha,
         );
+        // A transfer is not a sale: carry the miner-origin credit to the destination so the tag
+        // follows the alpha and its eventual sale is still reversed (no outflow recorded here).
+        Self::add_miner_origin_credit(netuid, destination_hotkey, destination_coldkey, delta_credit);
         if netuid == NetUid::ROOT {
             Self::add_stake_adjust_root_claimed_for_hotkey_and_coldkey(
                 destination_hotkey,
