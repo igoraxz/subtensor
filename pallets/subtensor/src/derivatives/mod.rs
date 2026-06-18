@@ -111,7 +111,11 @@ impl<T: Config> Pallet<T> {
     fn decay_curve(u: I64F64) -> I64F64 {
         let dmin = DecayMin::<T>::get();
         let dmax = DecayMax::<T>::get();
-        dmin.saturating_add(dmax.saturating_sub(dmin).saturating_mul(u).saturating_mul(u))
+        dmin.saturating_add(
+            dmax.saturating_sub(dmin)
+                .saturating_mul(u)
+                .saturating_mul(u),
+        )
     }
 
     /// Utilization ratio `min(1, S / cap)`.
@@ -273,13 +277,15 @@ impl<T: Config> Pallet<T> {
         let t_ref = Self::short_t_ref(netuid);
         let p = Self::tao_f(position_input);
 
-        let (c, n) = Self::solve_collateral(p, t_ref, Self::tao_f(agg.b_sigma), ShortBaseLtv::<T>::get())
-            .ok_or(Error::<T>::EffectiveLtvNonPositive)?;
+        let (c, n) =
+            Self::solve_collateral(p, t_ref, Self::tao_f(agg.b_sigma), ShortBaseLtv::<T>::get())
+                .ok_or(Error::<T>::EffectiveLtvNonPositive)?;
         let b = ShortBaseLtv::<T>::get().saturating_mul(c);
 
         // Capacity: S + B ≤ κ_S · T_ref (also bounds same-block stacked opens).
         ensure!(
-            Self::tao_f(agg.b_sigma).saturating_add(b) <= ShortKappa::<T>::get().saturating_mul(t_ref),
+            Self::tao_f(agg.b_sigma).saturating_add(b)
+                <= ShortKappa::<T>::get().saturating_mul(t_ref),
             Error::<T>::ShortCapacityExceeded
         );
 
@@ -387,7 +393,11 @@ impl<T: Config> Pallet<T> {
         let mut agg = ShortAggregate::<T>::get(netuid);
         Self::materialize_short(&mut pos, agg.omega);
 
-        Self::transfer_tao(&coldkey, &Self::short_custody_account(netuid), amount.into())?;
+        Self::transfer_tao(
+            &coldkey,
+            &Self::short_custody_account(netuid),
+            amount.into(),
+        )?;
         pos.r_stored = pos.r_stored.saturating_add(amount);
         pos.last_active = Self::get_current_block_as_u64();
         agg.r_sigma = agg.r_sigma.saturating_add(amount);
@@ -441,7 +451,12 @@ impl<T: Config> Pallet<T> {
         );
         // The repayment alpha must be unlocked (respect stake locks like unstake).
         Self::ensure_available_to_unstake(&coldkey, netuid, q_close)?;
-        Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(&pos.hotkey, &coldkey, netuid, q_close);
+        Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(
+            &pos.hotkey,
+            &coldkey,
+            netuid,
+            q_close,
+        );
         SubnetAlphaOut::<T>::mutate(netuid, |o| *o = o.saturating_sub(q_close));
         Self::increase_provided_alpha_reserve(netuid, q_close);
 
@@ -509,7 +524,9 @@ impl<T: Config> Pallet<T> {
         // the owner's last action, so the owner always has time to top up.
         ensure!(
             Self::get_current_block_as_u64()
-                >= pos.last_active.saturating_add(ShortDefaultGrace::<T>::get()),
+                >= pos
+                    .last_active
+                    .saturating_add(ShortDefaultGrace::<T>::get()),
             Error::<T>::PositionNotDefaultEligible
         );
 
@@ -640,8 +657,8 @@ impl<T: Config> Pallet<T> {
             //      `pEMA` is slow enough (governance: SubnetMovingPrice half-life)
             //      and the max price lift is capped (κ), the attacker's carry +
             //      bounded equity recovery exceeds any forced-slot-acquisition gain.
-            let c_rao = u128::from(pos.p_floor.to_u64())
-                .saturating_add(u128::from(pos.r_stored.to_u64()));
+            let c_rao =
+                u128::from(pos.p_floor.to_u64()).saturating_add(u128::from(pos.r_stored.to_u64()));
             let q_rao = u128::from(pos.q_liability.to_u64());
             let a_rao = u128::from(SubnetAlphaIn::<T>::get(netuid).to_u64());
             let t_rao = u128::from(SubnetTAO::<T>::get(netuid).to_u64());
@@ -665,7 +682,8 @@ impl<T: Config> Pallet<T> {
                 k_d = k_d.max(u128::from(pos.r_stored.to_u64()));
             }
 
-            let equity = TaoBalance::from(c_rao.saturating_sub(k_d).min(u128::from(u64::MAX)) as u64);
+            let equity =
+                TaoBalance::from(c_rao.saturating_sub(k_d).min(u128::from(u64::MAX)) as u64);
             let cover = TaoBalance::from(c_rao.min(k_d).min(u128::from(u64::MAX)) as u64);
             // Pay equity; if the transfer fails the amount stays in custody and is
             // recycled by the terminal sweep below, so the emitted `equity` reflects
@@ -786,14 +804,18 @@ impl<T: Config> Pallet<T> {
         let agg = ShortAggregate::<T>::get(netuid);
         let t_ref = Self::short_t_ref(netuid);
         let p = Self::tao_f(position_input);
-        let (c, n) = Self::solve_collateral(p, t_ref, Self::tao_f(agg.b_sigma), ShortBaseLtv::<T>::get())?;
+        let (c, n) =
+            Self::solve_collateral(p, t_ref, Self::tao_f(agg.b_sigma), ShortBaseLtv::<T>::get())?;
         let t_live = Self::tao_f(SubnetTAO::<T>::get(netuid));
         let a_live = Self::alpha_f(SubnetAlphaIn::<T>::get(netuid));
         let phi = Self::solve_phi(n, t_live)?;
 
         let q_alpha = Self::to_alpha(phi.saturating_mul(a_live));
         let scale = I64F64::from_num(1_000_000_000u64);
-        let lambda_eff = n.safe_div(c).saturating_mul(scale).saturating_to_num::<u64>();
+        let lambda_eff = n
+            .safe_div(c)
+            .saturating_mul(scale)
+            .saturating_to_num::<u64>();
         let daily_decay = Self::short_daily_decay(netuid, agg.b_sigma)
             .saturating_mul(scale)
             .saturating_to_num::<u64>();
@@ -815,8 +837,8 @@ impl<T: Config> Pallet<T> {
         if r_current <= dust || dust.is_zero() {
             return if r_current <= dust { 0 } else { u64::MAX };
         }
-        let delta = Self::short_daily_decay(netuid, b_sigma)
-            .safe_div(I64F64::from_num(BLOCKS_PER_DAY));
+        let delta =
+            Self::short_daily_decay(netuid, b_sigma).safe_div(I64F64::from_num(BLOCKS_PER_DAY));
         if delta <= I64F64::from_num(0) {
             return u64::MAX;
         }
@@ -826,9 +848,9 @@ impl<T: Config> Pallet<T> {
         }
         let ratio = Self::tao_f(r_current).safe_div(Self::tao_f(dust));
         match ratio.checked_ln() {
-            Some(ln_ratio) if ln_ratio > I64F64::from_num(0) => ln_ratio
-                .safe_div(neg_ln_g)
-                .saturating_to_num::<u64>(),
+            Some(ln_ratio) if ln_ratio > I64F64::from_num(0) => {
+                ln_ratio.safe_div(neg_ln_g).saturating_to_num::<u64>()
+            }
             _ => 0,
         }
     }
@@ -847,7 +869,9 @@ impl<T: Config> Pallet<T> {
             .saturating_mul(scale)
             .saturating_to_num::<u64>();
         let now = Self::get_current_block_as_u64();
-        let defaultable_at_block = pos.last_active.saturating_add(ShortDefaultGrace::<T>::get());
+        let defaultable_at_block = pos
+            .last_active
+            .saturating_add(ShortDefaultGrace::<T>::get());
         let default_eligible = pos.r_stored <= ShortDust::<T>::get() && now >= defaultable_at_block;
         let alpha_held =
             Self::get_stake_for_hotkey_and_coldkey_on_subnet(&pos.hotkey, coldkey, netuid);

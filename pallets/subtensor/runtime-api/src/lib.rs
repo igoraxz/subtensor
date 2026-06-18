@@ -3,6 +3,10 @@ extern crate alloc;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use codec::Compact;
+use pallet_subtensor::derivatives::{
+    CloseLongQuote, CloseShortQuote, LongMarketInfo, LongOpenQuote, LongPositionInfo,
+    ShortMarketInfo, ShortOpenQuote, ShortPositionInfo,
+};
 use pallet_subtensor::rpc_info::{
     delegate_info::DelegateInfo,
     dynamic_info::DynamicInfo,
@@ -13,10 +17,6 @@ use pallet_subtensor::rpc_info::{
     subnet_info::{
         SubnetHyperparams, SubnetHyperparamsV2, SubnetHyperparamsV3, SubnetInfo, SubnetInfov2,
     },
-};
-use pallet_subtensor::derivatives::{
-    CloseLongQuote, CloseShortQuote, LongMarketInfo, LongOpenQuote, LongPositionInfo,
-    ShortMarketInfo, ShortOpenQuote, ShortPositionInfo,
 };
 use pallet_subtensor::staking::lock::LockState;
 use sp_runtime::AccountId32;

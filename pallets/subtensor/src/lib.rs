@@ -1470,8 +1470,7 @@ pub mod pallet {
 
     /// Retained-buffer dust threshold `R_dust`.
     #[pallet::storage]
-    pub type ShortDust<T: Config> =
-        StorageValue<_, TaoBalance, ValueQuery, DefaultShortDust<T>>;
+    pub type ShortDust<T: Config> = StorageValue<_, TaoBalance, ValueQuery, DefaultShortDust<T>>;
 
     /// Anti-snipe default grace period, in blocks.
     #[pallet::storage]
@@ -1486,8 +1485,7 @@ pub mod pallet {
     /// --- SET ( netuid ) of subnets with live short state, so the per-block
     /// decay tick iterates only active subnets instead of all of them.
     #[pallet::storage]
-    pub type ShortActiveSubnets<T: Config> =
-        StorageMap<_, Identity, NetUid, (), OptionQuery>;
+    pub type ShortActiveSubnets<T: Config> = StorageMap<_, Identity, NetUid, (), OptionQuery>;
 
     /// Max open short positions per subnet (deregistration-work bound).
     #[pallet::storage]
@@ -1571,14 +1569,8 @@ pub mod pallet {
 
     /// --- MAP ( netuid ) --> long-side aggregate + decay accumulator.
     #[pallet::storage]
-    pub type LongAggregate<T: Config> = StorageMap<
-        _,
-        Identity,
-        NetUid,
-        crate::derivatives::LongAgg,
-        ValueQuery,
-        DefaultLongAgg<T>,
-    >;
+    pub type LongAggregate<T: Config> =
+        StorageMap<_, Identity, NetUid, crate::derivatives::LongAgg, ValueQuery, DefaultLongAgg<T>>;
 
     /// --- DMAP ( netuid, coldkey ) --> merged covered long position.
     #[pallet::storage]
@@ -1594,8 +1586,7 @@ pub mod pallet {
 
     /// --- SET ( netuid ) of subnets with live long state.
     #[pallet::storage]
-    pub type LongActiveSubnets<T: Config> =
-        StorageMap<_, Identity, NetUid, (), OptionQuery>;
+    pub type LongActiveSubnets<T: Config> = StorageMap<_, Identity, NetUid, (), OptionQuery>;
 
     /// --- MAP ( netuid ) --> count of open long positions on the subnet.
     #[pallet::storage]

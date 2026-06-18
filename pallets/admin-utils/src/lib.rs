@@ -2338,7 +2338,10 @@ pub mod pallet {
         /// Set the minimum short open input (in rao).
         #[pallet::call_index(102)]
         #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(0, 1))]
-        pub fn sudo_set_short_min_input(origin: OriginFor<T>, min_input_rao: u64) -> DispatchResult {
+        pub fn sudo_set_short_min_input(
+            origin: OriginFor<T>,
+            min_input_rao: u64,
+        ) -> DispatchResult {
             ensure_root(origin)?;
             pallet_subtensor::Pallet::<T>::set_short_min_input(min_input_rao.into());
             Ok(())

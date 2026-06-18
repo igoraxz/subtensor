@@ -401,7 +401,9 @@ mod tests {
         // Negative argument: 0 < exp(x) <= 1, and exp(-1) ≈ 1/e.
         let neg = I64F64::from_num(-1).checked_exp().unwrap();
         assert!(neg > I64F64::from_num(0) && neg <= I64F64::from_num(1));
-        assert!(neg.abs_diff(I64F64::from_num(1.0 / core::f64::consts::E)) < I64F64::from_num(0.0001));
+        assert!(
+            neg.abs_diff(I64F64::from_num(1.0 / core::f64::consts::E)) < I64F64::from_num(0.0001)
+        );
 
         // Large negative argument underflows toward 0 without panicking.
         assert!(I64F64::from_num(-50).checked_exp().unwrap() < I64F64::from_num(0.0001));

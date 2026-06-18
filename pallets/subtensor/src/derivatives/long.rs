@@ -97,13 +97,18 @@ impl<T: Config> Pallet<T> {
         let mut agg = LongAggregate::<T>::get(netuid);
         let a_ref = Self::long_a_ref(netuid);
         let p = Self::alpha_f(position_input);
-        let (c, n) =
-            Self::solve_collateral(p, a_ref, Self::alpha_f(agg.b_sigma), LongBaseLtv::<T>::get())
-                .ok_or(Error::<T>::EffectiveLtvNonPositive)?;
+        let (c, n) = Self::solve_collateral(
+            p,
+            a_ref,
+            Self::alpha_f(agg.b_sigma),
+            LongBaseLtv::<T>::get(),
+        )
+        .ok_or(Error::<T>::EffectiveLtvNonPositive)?;
         let b = LongBaseLtv::<T>::get().saturating_mul(c);
 
         ensure!(
-            Self::alpha_f(agg.b_sigma).saturating_add(b) <= LongKappa::<T>::get().saturating_mul(a_ref),
+            Self::alpha_f(agg.b_sigma).saturating_add(b)
+                <= LongKappa::<T>::get().saturating_mul(a_ref),
             Error::<T>::LongCapacityExceeded
         );
 
@@ -149,7 +154,12 @@ impl<T: Config> Pallet<T> {
             SubnetAlphaOut::<T>::get(netuid) >= position_input,
             Error::<T>::InsufficientCollateral
         );
-        Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(&hotkey, &coldkey, netuid, position_input);
+        Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(
+            &hotkey,
+            &coldkey,
+            netuid,
+            position_input,
+        );
         SubnetAlphaOut::<T>::mutate(netuid, |o| *o = o.saturating_sub(position_input));
         Self::decrease_provided_alpha_reserve(netuid, n_alpha.saturating_add(e_alpha));
 
@@ -217,7 +227,8 @@ impl<T: Config> Pallet<T> {
         Self::materialize_long(&mut pos, agg.omega);
 
         ensure!(
-            Self::get_stake_for_hotkey_and_coldkey_on_subnet(&pos.hotkey, &coldkey, netuid) >= amount,
+            Self::get_stake_for_hotkey_and_coldkey_on_subnet(&pos.hotkey, &coldkey, netuid)
+                >= amount,
             Error::<T>::InsufficientCollateral
         );
         Self::ensure_available_to_unstake(&coldkey, netuid, amount)?;
@@ -225,7 +236,12 @@ impl<T: Config> Pallet<T> {
             SubnetAlphaOut::<T>::get(netuid) >= amount,
             Error::<T>::InsufficientCollateral
         );
-        Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(&pos.hotkey, &coldkey, netuid, amount);
+        Self::decrease_stake_for_hotkey_and_coldkey_on_subnet(
+            &pos.hotkey,
+            &coldkey,
+            netuid,
+            amount,
+        );
         SubnetAlphaOut::<T>::mutate(netuid, |o| *o = o.saturating_sub(amount));
 
         pos.r_stored = pos.r_stored.saturating_add(amount);
@@ -278,7 +294,12 @@ impl<T: Config> Pallet<T> {
         Self::increase_provided_alpha_reserve(netuid, e_close);
         let returned = p_close.saturating_add(r_close);
         if !returned.is_zero() {
-            Self::increase_stake_for_hotkey_and_coldkey_on_subnet(&pos.hotkey, &coldkey, netuid, returned);
+            Self::increase_stake_for_hotkey_and_coldkey_on_subnet(
+                &pos.hotkey,
+                &coldkey,
+                netuid,
+                returned,
+            );
             SubnetAlphaOut::<T>::mutate(netuid, |o| *o = o.saturating_add(returned));
         }
 
@@ -404,8 +425,8 @@ impl<T: Config> Pallet<T> {
             // EMA-implied (`T_EMA = pEMA·A_live`) buyback so a suppressed live
             // price cannot cheapen the cover (the EMA leg's infimum over `A` is the
             // slow scalar `D/pEMA`). Integer rao + ceiling: never under-charges.
-            let c_l_rao = u128::from(pos.p_floor.to_u64())
-                .saturating_add(u128::from(pos.r_stored.to_u64()));
+            let c_l_rao =
+                u128::from(pos.p_floor.to_u64()).saturating_add(u128::from(pos.r_stored.to_u64()));
             let d_rao = u128::from(pos.d_liability.to_u64());
             let a_live = u128::from(SubnetAlphaIn::<T>::get(netuid).to_u64());
             let t_live = u128::from(SubnetTAO::<T>::get(netuid).to_u64());
@@ -420,10 +441,16 @@ impl<T: Config> Pallet<T> {
             let cover_live = u128::from(Self::buyback_cost_rao(a_live, t_live, d_rao));
             let cover_ema = u128::from(Self::buyback_cost_rao(a_live, t_ema, d_rao));
             let cover_rao = c_l_rao.min(cover_live.max(cover_ema));
-            let equity =
-                AlphaBalance::from(c_l_rao.saturating_sub(cover_rao).min(u128::from(u64::MAX)) as u64);
+            let equity = AlphaBalance::from(
+                c_l_rao.saturating_sub(cover_rao).min(u128::from(u64::MAX)) as u64,
+            );
             if !equity.is_zero() {
-                Self::increase_stake_for_hotkey_and_coldkey_on_subnet(&pos.hotkey, &coldkey, netuid, equity);
+                Self::increase_stake_for_hotkey_and_coldkey_on_subnet(
+                    &pos.hotkey,
+                    &coldkey,
+                    netuid,
+                    equity,
+                );
                 SubnetAlphaOut::<T>::mutate(netuid, |o| *o = o.saturating_add(equity));
             }
             // The cover portion of the collateral stays burned (recycled).
@@ -466,9 +493,9 @@ impl<T: Config> Pallet<T> {
     /// lossless identity; the saturation is only a guard should the balance type
     /// ever be widened. Read-only (used by views), so any clamp is non-consensus.
     fn long_tao_held(coldkey: &T::AccountId) -> TaoBalance {
-        TaoBalance::from(
-            sp_runtime::SaturatedConversion::saturated_into::<u64>(Self::get_coldkey_balance(coldkey)),
-        )
+        TaoBalance::from(sp_runtime::SaturatedConversion::saturated_into::<u64>(
+            Self::get_coldkey_balance(coldkey),
+        ))
     }
 
     /// Pure pre-open quote for a covered long. `None` when longs are disabled or
@@ -480,8 +507,12 @@ impl<T: Config> Pallet<T> {
         let agg = LongAggregate::<T>::get(netuid);
         let a_ref = Self::long_a_ref(netuid);
         let p = Self::alpha_f(position_input);
-        let (c, n) =
-            Self::solve_collateral(p, a_ref, Self::alpha_f(agg.b_sigma), LongBaseLtv::<T>::get())?;
+        let (c, n) = Self::solve_collateral(
+            p,
+            a_ref,
+            Self::alpha_f(agg.b_sigma),
+            LongBaseLtv::<T>::get(),
+        )?;
         let a_live = Self::alpha_f(SubnetAlphaIn::<T>::get(netuid));
         let t_live = Self::tao_f(SubnetTAO::<T>::get(netuid));
         let phi = Self::solve_phi(n, a_live)?;
@@ -492,7 +523,10 @@ impl<T: Config> Pallet<T> {
             retained_proceeds: Self::to_alpha(n),
             tao_liability: d_tao,
             escrow: Self::to_alpha(phi.saturating_mul(a_live)),
-            effective_ltv: n.safe_div(c).saturating_mul(scale).saturating_to_num::<u64>(),
+            effective_ltv: n
+                .safe_div(c)
+                .saturating_mul(scale)
+                .saturating_to_num::<u64>(),
             daily_decay: Self::long_daily_decay(netuid, agg.b_sigma)
                 .saturating_mul(scale)
                 .saturating_to_num::<u64>(),
