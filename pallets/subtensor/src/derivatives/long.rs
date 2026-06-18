@@ -454,4 +454,169 @@ impl<T: Config> Pallet<T> {
     pub fn set_long_max_positions(max: u32) {
         LongMaxPositions::<T>::put(max);
     }
+
+    // ---- read-only views (mirror of the short read layer) --------------
+
+    /// Free TAO balance a coldkey holds (the asset used to repay a long's `D`).
+    /// `BalanceOf<T>` is u64 rao in this runtime, so `saturated_into::<u64>()` is a
+    /// lossless identity; the saturation is only a guard should the balance type
+    /// ever be widened. Read-only (used by views), so any clamp is non-consensus.
+    fn long_tao_held(coldkey: &T::AccountId) -> TaoBalance {
+        TaoBalance::from(
+            sp_runtime::SaturatedConversion::saturated_into::<u64>(Self::get_coldkey_balance(coldkey)),
+        )
+    }
+
+    /// Pure pre-open quote for a covered long. `None` when longs are disabled or
+    /// the subnet is not a dynamic market.
+    pub fn quote_open_long(netuid: NetUid, position_input: AlphaBalance) -> Option<LongOpenQuote> {
+        if !LongsEnabled::<T>::get() || SubnetMechanism::<T>::get(netuid) != 1 {
+            return None;
+        }
+        let agg = LongAggregate::<T>::get(netuid);
+        let a_ref = Self::long_a_ref(netuid);
+        let p = Self::alpha_f(position_input);
+        let (c, n) =
+            Self::solve_collateral(p, a_ref, Self::alpha_f(agg.b_sigma), LongBaseLtv::<T>::get())?;
+        let a_live = Self::alpha_f(SubnetAlphaIn::<T>::get(netuid));
+        let t_live = Self::tao_f(SubnetTAO::<T>::get(netuid));
+        let phi = Self::solve_phi(n, a_live)?;
+        let d_tao = Self::to_tao(phi.saturating_mul(t_live));
+        let scale = I64F64::from_num(1_000_000_000u64);
+        Some(LongOpenQuote {
+            gross_collateral: Self::to_alpha(c),
+            retained_proceeds: Self::to_alpha(n),
+            tao_liability: d_tao,
+            escrow: Self::to_alpha(phi.saturating_mul(a_live)),
+            effective_ltv: n.safe_div(c).saturating_mul(scale).saturating_to_num::<u64>(),
+            daily_decay: Self::long_daily_decay(netuid, agg.b_sigma)
+                .saturating_mul(scale)
+                .saturating_to_num::<u64>(),
+            est_close_cost: d_tao,
+        })
+    }
+
+    /// Estimated blocks until `r_current` decays to dust at the current rate.
+    fn long_blocks_to_dust(netuid: NetUid, r_current: AlphaBalance, b_sigma: AlphaBalance) -> u64 {
+        let dust = LongDust::<T>::get();
+        if r_current <= dust || dust.is_zero() {
+            return if r_current <= dust { 0 } else { u64::MAX };
+        }
+        let delta =
+            Self::long_daily_decay(netuid, b_sigma).safe_div(I64F64::from_num(BLOCKS_PER_DAY));
+        if delta <= I64F64::from_num(0) {
+            return u64::MAX;
+        }
+        let neg_ln_g = Self::neg_ln_one_minus(delta);
+        if neg_ln_g <= I64F64::from_num(0) {
+            return u64::MAX;
+        }
+        let ratio = Self::alpha_f(r_current).safe_div(Self::alpha_f(dust));
+        match ratio.checked_ln() {
+            Some(ln_ratio) if ln_ratio > I64F64::from_num(0) => {
+                ln_ratio.safe_div(neg_ln_g).saturating_to_num::<u64>()
+            }
+            _ => 0,
+        }
+    }
+
+    /// Materialized, health-rich view of one long position.
+    pub fn get_long_position(
+        coldkey: &T::AccountId,
+        netuid: NetUid,
+    ) -> Option<LongPositionInfo<T::AccountId>> {
+        let mut pos = LongPositions::<T>::get(netuid, coldkey)?;
+        let agg = LongAggregate::<T>::get(netuid);
+        Self::materialize_long(&mut pos, agg.omega);
+
+        let scale = I64F64::from_num(1_000_000_000u64);
+        let now = Self::get_current_block_as_u64();
+        let defaultable_at_block = pos.last_active.saturating_add(LongDefaultGrace::<T>::get());
+        let default_eligible = pos.r_stored <= LongDust::<T>::get() && now >= defaultable_at_block;
+        let tao_held = Self::long_tao_held(coldkey);
+        let d = pos.d_liability;
+        Some(LongPositionInfo {
+            netuid,
+            hotkey: pos.hotkey.clone(),
+            floor: pos.p_floor,
+            tao_liability: d,
+            buffer: pos.r_stored,
+            escrow: pos.e_stored,
+            collateral_claim: pos.p_floor.saturating_add(pos.r_stored),
+            daily_decay: Self::long_daily_decay(netuid, agg.b_sigma)
+                .saturating_mul(scale)
+                .saturating_to_num::<u64>(),
+            blocks_to_dust: Self::long_blocks_to_dust(netuid, pos.r_stored, agg.b_sigma),
+            default_eligible,
+            defaultable_at_block,
+            est_close_cost: d,
+            tao_held,
+            tao_needed: TaoBalance::from(d.to_u64().saturating_sub(tao_held.to_u64())),
+        })
+    }
+
+    /// All of a coldkey's long positions across subnets.
+    pub fn get_long_positions(coldkey: &T::AccountId) -> Vec<LongPositionInfo<T::AccountId>> {
+        Self::get_all_subnet_netuids()
+            .into_iter()
+            .filter_map(|netuid| Self::get_long_position(coldkey, netuid))
+            .collect()
+    }
+
+    /// Per-subnet long market state for sizing and capacity decisions.
+    pub fn get_subnet_long_state(netuid: NetUid) -> Option<LongMarketInfo> {
+        if !Self::if_subnet_exist(netuid) {
+            return None;
+        }
+        let agg = LongAggregate::<T>::get(netuid);
+        let a_ref = Self::long_a_ref(netuid);
+        let cap = LongKappa::<T>::get().saturating_mul(a_ref);
+        let used = Self::alpha_f(agg.b_sigma);
+        let scale = I64F64::from_num(1_000_000_000u64);
+        let ppb = |x: I64F64| x.saturating_mul(scale).saturating_to_num::<u64>();
+        Some(LongMarketInfo {
+            longs_enabled: LongsEnabled::<T>::get(),
+            base_ltv: ppb(LongBaseLtv::<T>::get()),
+            kappa: ppb(LongKappa::<T>::get()),
+            decay_min: ppb(DecayMin::<T>::get()),
+            decay_max: ppb(DecayMax::<T>::get()),
+            current_daily_decay: ppb(Self::long_daily_decay(netuid, agg.b_sigma)),
+            a_ref: Self::to_alpha(a_ref),
+            footprint_used: agg.b_sigma,
+            footprint_cap: Self::to_alpha(cap),
+            footprint_remaining: Self::to_alpha(cap.saturating_sub(used)),
+            open_interest_tao: agg.d_sigma,
+            buffer_total: agg.r_sigma,
+            escrow_total: agg.e_sigma,
+            dust_threshold: LongDust::<T>::get(),
+            min_input: LongMinInput::<T>::get(),
+            default_grace: LongDefaultGrace::<T>::get(),
+        })
+    }
+
+    /// Pre-close quote for `fraction_ppb / 1e9` of a long position.
+    pub fn quote_close_long(
+        coldkey: &T::AccountId,
+        netuid: NetUid,
+        fraction_ppb: u64,
+    ) -> Option<CloseLongQuote> {
+        if fraction_ppb == 0 || fraction_ppb > 1_000_000_000 {
+            return None;
+        }
+        let mut pos = LongPositions::<T>::get(netuid, coldkey)?;
+        let agg = LongAggregate::<T>::get(netuid);
+        Self::materialize_long(&mut pos, agg.omega);
+        let rho = I64F64::from_num(fraction_ppb).safe_div(I64F64::from_num(1_000_000_000u64));
+
+        let repay_tao = Self::mul_tao(pos.d_liability, rho);
+        let tao_held = Self::long_tao_held(coldkey);
+        Some(CloseLongQuote {
+            repay_tao,
+            returned_alpha: Self::mul_alpha(pos.p_floor, rho)
+                .saturating_add(Self::mul_alpha(pos.r_stored, rho)),
+            escrow_settled: Self::mul_alpha(pos.e_stored, rho),
+            tao_held,
+            tao_needed: TaoBalance::from(repay_tao.to_u64().saturating_sub(tao_held.to_u64())),
+        })
+    }
 }

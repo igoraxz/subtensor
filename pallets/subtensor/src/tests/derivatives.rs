@@ -1336,6 +1336,56 @@ fn long_dereg_cold_ema_pays_zero_equity() {
     });
 }
 
+#[test]
+fn quote_open_long_matches_realized_open() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_long(1000 * TAO, 1000 * TAO, 1.0);
+        let trader = U256::from(10);
+        let hotkey = U256::from(11);
+        give_alpha(hotkey, trader, netuid, AlphaBalance::from(500 * TAO));
+        let p = AlphaBalance::from(100 * TAO);
+
+        let quote = SubtensorModule::quote_open_long(netuid, p).unwrap();
+        assert_ok!(SubtensorModule::open_long(RuntimeOrigin::signed(trader), hotkey, netuid, p, TaoBalance::MAX));
+
+        let pos = LongPositions::<Test>::get(netuid, trader).unwrap();
+        // Pure quote equals the realized open (same code path).
+        assert_eq!(pos.r_stored, quote.retained_proceeds);
+        assert_eq!(pos.d_liability, quote.tao_liability);
+        assert_eq!(pos.e_stored, quote.escrow);
+        assert_eq!(pos.p_floor, p);
+        assert_eq!(quote.est_close_cost, quote.tao_liability); // close repays D directly
+    });
+}
+
+#[test]
+fn long_position_and_market_views() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_long(1000 * TAO, 1000 * TAO, 1.0);
+        let trader = U256::from(10);
+        let hotkey = U256::from(11);
+        give_alpha(hotkey, trader, netuid, AlphaBalance::from(500 * TAO));
+        assert_ok!(SubtensorModule::open_long(RuntimeOrigin::signed(trader), hotkey, netuid, AlphaBalance::from(100 * TAO), TaoBalance::MAX));
+
+        let view = SubtensorModule::get_long_position(&trader, netuid).unwrap();
+        let pos = LongPositions::<Test>::get(netuid, trader).unwrap();
+        assert_eq!(view.floor, pos.p_floor);
+        assert_eq!(view.tao_liability, pos.d_liability);
+        assert_eq!(view.collateral_claim, pos.p_floor.saturating_add(pos.r_stored));
+        assert_eq!(view.est_close_cost, pos.d_liability);
+        assert!(!view.default_eligible);
+        assert_eq!(SubtensorModule::get_long_positions(&trader).len(), 1);
+
+        let market = SubtensorModule::get_subnet_long_state(netuid).unwrap();
+        assert!(market.longs_enabled);
+        assert!(market.footprint_used > AlphaBalance::ZERO);
+        assert!(market.open_interest_tao > TaoBalance::ZERO);
+        // close quote is consistent with the position
+        let cq = SubtensorModule::quote_close_long(&trader, netuid, 1_000_000_000).unwrap();
+        assert_eq!(cq.repay_tao, pos.d_liability);
+    });
+}
+
 // Fix (L1): long open won't mint alpha by saturating SubnetAlphaOut to zero.
 #[test]
 fn open_long_guards_against_alpha_mint() {
