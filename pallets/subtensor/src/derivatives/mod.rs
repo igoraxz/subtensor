@@ -246,6 +246,7 @@ impl<T: Config> Pallet<T> {
         hotkey: T::AccountId,
         netuid: NetUid,
         position_input: TaoBalance,
+        max_alpha_liability: AlphaBalance,
     ) -> DispatchResult {
         let coldkey = ensure_signed(origin)?;
         ensure!(ShortsEnabled::<T>::get(), Error::<T>::ShortsDisabled);
@@ -283,6 +284,24 @@ impl<T: Config> Pallet<T> {
         let q_alpha = Self::to_alpha(phi.saturating_mul(a_live));
         ensure!(!n_tao.is_zero(), Error::<T>::RetainedProceedsNonPositive);
 
+        // Caller-signed execution bound (anti-sandwich): the alpha liability
+        // derived from live reserves at inclusion must not exceed the maximum the
+        // trader accepted. `AlphaBalance::MAX` opts out of the bound.
+        ensure!(q_alpha <= max_alpha_liability, Error::<T>::SlippageTooHigh);
+
+        // Validate-before-mutate: all fallible eligibility checks that do not
+        // depend on the realized legs run BEFORE any funds move, so a rejected
+        // open never strands custody TAO or desyncs pool/`TotalStake` accounting.
+        match ShortPositions::<T>::get(netuid, &coldkey) {
+            Some(existing) => {
+                ensure!(existing.hotkey == hotkey, Error::<T>::ShortHotkeyMismatch)
+            }
+            None => ensure!(
+                ShortPositionCount::<T>::get(netuid) < ShortMaxPositions::<T>::get(),
+                Error::<T>::ShortPositionLimit
+            ),
+        }
+
         let custody = Self::short_custody_account(netuid);
         let subnet_account =
             Self::get_subnet_account_id(netuid).ok_or(Error::<T>::SubnetNotExists)?;
@@ -298,9 +317,7 @@ impl<T: Config> Pallet<T> {
         let block = Self::get_current_block_as_u64();
         let pos = match ShortPositions::<T>::get(netuid, &coldkey) {
             Some(mut existing) => {
-                // A merge must target the same hotkey, otherwise the liability
-                // alpha repaid on close would be drawn from the wrong stake.
-                ensure!(existing.hotkey == hotkey, Error::<T>::ShortHotkeyMismatch);
+                // Hotkey match was validated before any mutation above.
                 Self::materialize_short(&mut existing, agg.omega);
                 existing.p_floor = existing.p_floor.saturating_add(position_input);
                 existing.q_liability = existing.q_liability.saturating_add(q_alpha);
@@ -311,13 +328,9 @@ impl<T: Config> Pallet<T> {
                 existing
             }
             None => {
-                // New position: enforce and bump the per-subnet position count
-                // so deregistration settlement work stays bounded.
+                // Position limit was validated before any mutation above; bump
+                // the per-subnet count so dereg settlement work stays bounded.
                 let count = ShortPositionCount::<T>::get(netuid);
-                ensure!(
-                    count < ShortMaxPositions::<T>::get(),
-                    Error::<T>::ShortPositionLimit
-                );
                 ShortPositionCount::<T>::insert(netuid, count.saturating_add(1));
                 ShortPosition {
                     hotkey,
@@ -586,24 +599,65 @@ impl<T: Config> Pallet<T> {
                 TotalStake::<T>::mutate(|t| *t = t.saturating_add(pos.e_stored));
             }
 
-            // K_D(Q) = max(K_spot,last(Q), Q·pEMA).
-            let c = Self::tao_f(pos.p_floor).saturating_add(Self::tao_f(pos.r_stored));
-            let k_ema = Self::alpha_f(pos.q_liability).saturating_mul(pema);
-            let k_spot = Self::short_spot_close_cost(netuid, pos.q_liability);
-            let k_d = k_ema.max(k_spot);
+            // K_D(Q) = max(K_spot,last, K_EMA), both slippage-aware (spec §11.4, §13.6).
+            //
+            // K_spot uses live reserves; K_EMA prices the buyback against the
+            // EMA-implied reserve `T_EMA = pEMA·A_live`. Two reasons the EMA leg is
+            // a CPMM buyback (not the scalar `Q·pEMA`):
+            //   1. A scalar price understates the true cost of acquiring a large Q
+            //      (spec §13.6) — slippage must be charged so terminal extraction is
+            //      bounded by what closing actually costs.
+            //   2. An attacker who shorts a subnet to force its deregistration
+            //      suppresses the *live* price, which would cheapen K_spot. Pricing
+            //      the EMA leg off the slow `pEMA` keeps K_D high, so the carry paid
+            //      while waiting for dereg is not refunded at settlement. Provided
+            //      `pEMA` is slow enough (governance: SubnetMovingPrice half-life)
+            //      and the max price lift is capped (κ), the attacker's carry +
+            //      bounded equity recovery exceeds any forced-slot-acquisition gain.
+            let c_rao = u128::from(pos.p_floor.to_u64())
+                .saturating_add(u128::from(pos.r_stored.to_u64()));
+            let q_rao = u128::from(pos.q_liability.to_u64());
+            let a_rao = u128::from(SubnetAlphaIn::<T>::get(netuid).to_u64());
+            let t_rao = u128::from(SubnetTAO::<T>::get(netuid).to_u64());
+            // EMA-implied TAO reserve at the slow price: `T_EMA = pEMA · A_live`.
+            let t_ema_rao = pema
+                .saturating_mul(Self::alpha_f(SubnetAlphaIn::<T>::get(netuid)))
+                .max(I64F64::from_num(0))
+                .saturating_to_num::<u128>();
+            let k_spot = u128::from(Self::buyback_cost_rao(t_rao, a_rao, q_rao));
+            let k_ema = u128::from(Self::buyback_cost_rao(t_ema_rao, a_rao, q_rao));
+            let mut k_d = k_spot.max(k_ema);
 
-            let equity = Self::to_tao(c.saturating_sub(k_d));
-            let cover = Self::to_tao(c.min(k_d));
-            if !equity.is_zero() {
-                let _ = Self::transfer_tao(&custody, &coldkey, equity.into());
+            // Cold-EMA guard. When `pEMA == 0` (fresh subnet, no trustworthy slow
+            // price), the EMA leg is 0 and only the suppressible live leg governs —
+            // which would let a trader who forced the dereg recover the pool-origin
+            // retained buffer `R` as equity. Floor `K_D` at `R` so equity can never
+            // exceed the trader's own floor `P` (`equity = C − K_D ≤ P`); the buffer
+            // is recycled rather than refunded. A warm EMA prices a genuine in-the-
+            // money close correctly, so legitimate profit is unaffected.
+            if pema <= I64F64::from_num(0) {
+                k_d = k_d.max(u128::from(pos.r_stored.to_u64()));
             }
+
+            let equity = TaoBalance::from(c_rao.saturating_sub(k_d).min(u128::from(u64::MAX)) as u64);
+            let cover = TaoBalance::from(c_rao.min(k_d).min(u128::from(u64::MAX)) as u64);
+            // Pay equity; if the transfer fails the amount stays in custody and is
+            // recycled by the terminal sweep below, so the emitted `equity` reflects
+            // what was actually paid (never claims an unpaid amount).
+            let paid = if !equity.is_zero()
+                && Self::transfer_tao(&custody, &coldkey, equity.into()).is_ok()
+            {
+                equity
+            } else {
+                TaoBalance::from(0)
+            };
             Self::recycle_custody_tao(&custody, cover);
 
             ShortPositions::<T>::remove(netuid, &coldkey);
             Self::deposit_event(Event::ShortTerminalSettled {
                 coldkey,
                 netuid,
-                equity,
+                equity: paid,
                 liability_cover: cover,
             });
         }
@@ -615,16 +669,32 @@ impl<T: Config> Pallet<T> {
         ShortPositionCount::<T>::remove(netuid);
     }
 
-    /// Slippage-aware TAO cost to buy `q` alpha on the live pool (CPMM core).
-    fn short_spot_close_cost(netuid: NetUid, q: AlphaBalance) -> I64F64 {
-        let t = Self::tao_f(SubnetTAO::<T>::get(netuid));
-        let a = Self::alpha_f(SubnetAlphaIn::<T>::get(netuid));
-        let qf = Self::alpha_f(q);
-        if a <= qf {
-            // Liability un-buyable from the pool: saturate so cover = C, equity = 0.
-            return I64F64::from_num(1e18);
+    /// Slippage-aware CPMM TAO cost (rao) to buy `q_rao` alpha against reserves
+    /// `(t_rao, a_rao)`: the exact constant-product amount `⌈t·q / (a − q)⌉`.
+    ///
+    /// Computed in u128 so the `t·q` product (each operand up to ~2e16 rao =
+    /// total supply) cannot overflow, and **ceiling-rounded** so the terminal
+    /// liability cover is never under-charged (a conservative cover bounds the
+    /// equity an attacker can recover by forcing a deregistration). Saturates to
+    /// `u64::MAX` when the liability is un-buyable (`a ≤ q`), so `cover = C` and
+    /// `equity = 0` for that position.
+    fn buyback_cost_rao(t_rao: u128, a_rao: u128, q_rao: u128) -> u64 {
+        if a_rao <= q_rao {
+            return u64::MAX;
         }
-        t.saturating_mul(qf).safe_div(a.saturating_sub(qf))
+        let num = t_rao.saturating_mul(q_rao);
+        let den = a_rao.saturating_sub(q_rao);
+        num.div_ceil(den).min(u64::MAX as u128) as u64
+    }
+
+    /// Slippage-aware TAO cost (as I64F64) to buy `q` alpha on the live pool.
+    fn short_spot_close_cost(netuid: NetUid, q: AlphaBalance) -> I64F64 {
+        let cost = Self::buyback_cost_rao(
+            u128::from(SubnetTAO::<T>::get(netuid).to_u64()),
+            u128::from(SubnetAlphaIn::<T>::get(netuid).to_u64()),
+            u128::from(q.to_u64()),
+        );
+        I64F64::from_num(cost)
     }
 
     // ---- governance setters (spec §14.6) -------------------------------

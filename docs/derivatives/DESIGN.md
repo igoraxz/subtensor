@@ -57,7 +57,7 @@ decay step, (d) ~4 extrinsics, (e) one runtime-API quote. Risk reserve EMAs are 
 | `κ_S` | short footprint cap factor | governance param `ShortKappa` |
 | `d_min`,`d_max` | decay bounds | `DecayMin`, `DecayMax` |
 | `R_dust` | dust threshold | `ShortDust` |
-| `K_D(Q)` | terminal liability value | computed at dereg: `max(K_spot,last, Q·pEMA)` |
+| `K_D(Q)` | terminal liability value | computed at dereg: `max(K_spot,last, K_EMA)`, both slippage-aware CPMM buybacks (`K_spot` on live reserves, `K_EMA` on `T_EMA=pEMA·A_live`); floored at retained buffer `R` when `pEMA==0` (cold-EMA guard) |
 
 ---
 
@@ -113,9 +113,17 @@ pro-rata; aggregates updated.
 
 - **Default:** restore residual `R + E` (restoration zap), `recycle_tao(coldkey, P)` for the floor,
   extinguish `Q` (no alpha moves — it was virtual), drop position from aggregates.
-- **Dereg terminal:** value liability at `K_D(Q) = max(K_spot,last(Q), Q·pEMA)`; equity =
-  `max(0, (P+R) − K_D)` paid to trader; `min(P+R, K_D)` recycled via `recycle_tao` outside terminal
-  distribution; `Q` extinguished. Hooked into `do_dissolve_network` before `destroy_alpha_in_out_stakes`.
+- **Dereg terminal:** value liability at `K_D(Q) = max(K_spot,last(Q), K_EMA(Q))`, where both legs
+  are slippage-aware CPMM buybacks (`⌈t·q/(a−q)⌉` in u128 with ceiling rounding) — `K_spot` on live
+  reserves, `K_EMA` on the EMA-implied reserve `T_EMA = pEMA·A_live`. A scalar `Q·pEMA` is **not**
+  used (it understates the cost of a large `Q`). When `pEMA==0` (cold subnet, no slow reference) the
+  short floors `K_D ≥ R` so equity ≤ floor `P` (no pool-origin buffer is refunded); the long is
+  naturally safe (the cold leg hits the un-buyable sentinel → cover = collateral). equity =
+  `max(0, (P+R) − K_D)` paid to trader; `min(P+R, K_D)` recycled outside terminal distribution; `Q`
+  extinguished. Hooked into `do_dissolve_network` before `destroy_alpha_in_out_stakes`.
+  Governance note: tune `SubnetMovingPrice` half-life (EMA speed) and `κ` (max price lift) together so
+  carry paid while forcing a dereg exceeds the bounded equity recovery — i.e. attacking a subnet to
+  dereg it is never net-profitable.
 
 ### 3.5 Conservation invariant (must be a test)
 
@@ -253,9 +261,9 @@ Thin dispatch wrappers in `macros/dispatches.rs` → `do_*` in `derivatives/`. N
 
 | call_index | Extrinsic | Delegates to | Notes |
 |---|---|---|---|
-| 139 | `open_short(netuid, hotkey, position_input: TaoBalance, price_limit: TaoBalance)` | `do_open_short` | gated by `ShortsEnabled`; solves `C,N,ϕ,Q,E`; capacity + domain checks; merges into existing position |
+| 139 | `open_short(netuid, hotkey, position_input: TaoBalance, max_alpha_liability: AlphaBalance)` | `do_open_short` | gated by `ShortsEnabled`; solves `C,N,ϕ,Q,E`; rejects `SlippageTooHigh` if live-derived `Q > max_alpha_liability` (caller-signed bound, `MAX` opts out); capacity + domain checks; merges into existing position |
 | 140 | `top_up_short(netuid, amount: TaoBalance)` | `do_top_up_short` | adds to `R` only (spec §8.2); fresh decaying capital |
-| 141 | `close_short(netuid, fraction: U64F64, price_limit: TaoBalance)` | `do_close_short` | partial (`ρ<1`) and full (`ρ=1`); repays `ρQ`, returns `ρ(P+R)` |
+| 141 | `close_short(netuid, fraction_ppb: u64)` | `do_close_short` | `ρ = fraction_ppb/1e9`; partial (`ρ<1`) and full (`ρ=1`); repays `ρQ`, returns `ρ(P+R)` (close is deterministic given the materialized position — no execution bound needed) |
 | 142 | `default_short(coldkey, netuid)` | `do_default_short` | permissionless; only valid when materialized `R ≤ R_dust` |
 
 `hotkey` is carried so the position is associated with a `(hotkey, coldkey, netuid)` identity
@@ -307,7 +315,7 @@ breakeven_close_price`. Pure reads + `sim_swap`; no state change. JSON-RPC wrapp
 8. Footprint cap: `S + B ≤ κ_S·T_ref` (also bounds same-block stacked opens via progressive `S`).
 9. Flow neutrality: no `record_tao_*` calls on any derivative leg.
 10. Dereg awareness: terminal alpha base read from subnet mode (legacy vs new, per `destroy_alpha_in_out_stakes` rules).
-11. Terminal short settlement: `K_D(Q) = max(K_spot,last, Q·pEMA)`.
+11. Terminal short settlement: `K_D(Q) = max(K_spot,last, K_EMA)` (both slippage-aware CPMM buybacks; cold-EMA floor `K_D ≥ R`).
 12. Escrow bound: `E/R = 1/(1−ϕ)` stays bounded by `κ_S`-implied `ϕ_cap`, so dust default is MEV-trivial.
 
 ---

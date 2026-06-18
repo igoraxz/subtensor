@@ -2602,8 +2602,9 @@ mod dispatches {
             hotkey: T::AccountId,
             netuid: NetUid,
             position_input: TaoBalance,
+            max_alpha_liability: AlphaBalance,
         ) -> DispatchResult {
-            Self::do_open_short(origin, hotkey, netuid, position_input)
+            Self::do_open_short(origin, hotkey, netuid, position_input, max_alpha_liability)
         }
 
         /// Top up a covered short's carry buffer with fresh capital.
@@ -2647,8 +2648,9 @@ mod dispatches {
             hotkey: T::AccountId,
             netuid: NetUid,
             position_input: AlphaBalance,
+            max_tao_liability: TaoBalance,
         ) -> DispatchResult {
-            Self::do_open_long(origin, hotkey, netuid, position_input)
+            Self::do_open_long(origin, hotkey, netuid, position_input, max_tao_liability)
         }
 
         /// Top up a covered long's carry buffer with fresh Alpha.

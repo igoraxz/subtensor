@@ -79,6 +79,7 @@ impl<T: Config> Pallet<T> {
         hotkey: T::AccountId,
         netuid: NetUid,
         position_input: AlphaBalance,
+        max_tao_liability: TaoBalance,
     ) -> DispatchResult {
         let coldkey = ensure_signed(origin)?;
         ensure!(LongsEnabled::<T>::get(), Error::<T>::LongsDisabled);
@@ -115,6 +116,21 @@ impl<T: Config> Pallet<T> {
         let d_tao = Self::to_tao(phi.saturating_mul(t_live));
         ensure!(!n_alpha.is_zero(), Error::<T>::RetainedProceedsNonPositive);
 
+        // Caller-signed execution bound (anti-sandwich): the TAO liability derived
+        // from live reserves must not exceed the maximum the trader accepted.
+        // `TaoBalance::MAX` opts out of the bound.
+        ensure!(d_tao <= max_tao_liability, Error::<T>::SlippageTooHigh);
+
+        // Validate-before-mutate: merge hotkey and position-limit checks run before
+        // any stake/reserve mutation, so a rejected open never burns/strands Alpha.
+        match LongPositions::<T>::get(netuid, &coldkey) {
+            Some(existing) => ensure!(existing.hotkey == hotkey, Error::<T>::LongHotkeyMismatch),
+            None => ensure!(
+                LongPositionCount::<T>::get(netuid) < LongMaxPositions::<T>::get(),
+                Error::<T>::LongPositionLimit
+            ),
+        }
+
         // Trader posts P Alpha from stake; remove N+E Alpha from the pool. All
         // of this leaves issuance (held off-chain in the position numbers).
         ensure!(
@@ -139,7 +155,7 @@ impl<T: Config> Pallet<T> {
         let block = Self::get_current_block_as_u64();
         let pos = match LongPositions::<T>::get(netuid, &coldkey) {
             Some(mut existing) => {
-                ensure!(existing.hotkey == hotkey, Error::<T>::LongHotkeyMismatch);
+                // Hotkey match was validated before any mutation above.
                 Self::materialize_long(&mut existing, agg.omega);
                 existing.p_floor = existing.p_floor.saturating_add(position_input);
                 existing.d_liability = existing.d_liability.saturating_add(d_tao);
@@ -150,8 +166,8 @@ impl<T: Config> Pallet<T> {
                 existing
             }
             None => {
+                // Position limit was validated before any mutation above.
                 let count = LongPositionCount::<T>::get(netuid);
-                ensure!(count < LongMaxPositions::<T>::get(), Error::<T>::LongPositionLimit);
                 LongPositionCount::<T>::insert(netuid, count.saturating_add(1));
                 LongPosition {
                     hotkey,
@@ -378,15 +394,30 @@ impl<T: Config> Pallet<T> {
             // Escrow rejoins the pool / terminal distribution.
             Self::increase_provided_alpha_reserve(netuid, pos.e_stored);
 
-            let c_l = Self::alpha_f(pos.p_floor.saturating_add(pos.r_stored));
-            let d = Self::tao_f(pos.d_liability);
-            // Alpha needed to cover the TAO debt at the terminal price.
-            let cover = if price > I64F64::from_num(0) {
-                c_l.min(d.safe_div(price))
-            } else {
-                c_l
-            };
-            let equity = Self::to_alpha(c_l.saturating_sub(cover));
+            // Slippage-aware cover, mirroring the short terminal leg: the Alpha
+            // required to repay the `D` TAO debt on the CPMM is `⌈A·D/(T−D)⌉ =
+            // buyback_cost_rao(A, T, D)`. Take the larger of the live and the
+            // EMA-implied (`T_EMA = pEMA·A_live`) buyback so a suppressed live
+            // price cannot cheapen the cover (the EMA leg's infimum over `A` is the
+            // slow scalar `D/pEMA`). Integer rao + ceiling: never under-charges.
+            let c_l_rao = u128::from(pos.p_floor.to_u64())
+                .saturating_add(u128::from(pos.r_stored.to_u64()));
+            let d_rao = u128::from(pos.d_liability.to_u64());
+            let a_live = u128::from(SubnetAlphaIn::<T>::get(netuid).to_u64());
+            let t_live = u128::from(SubnetTAO::<T>::get(netuid).to_u64());
+            let t_ema = price
+                .saturating_mul(Self::alpha_f(SubnetAlphaIn::<T>::get(netuid)))
+                .max(I64F64::from_num(0))
+                .saturating_to_num::<u128>();
+            // Cold EMA (`pEMA==0`) needs no explicit floor here (unlike the short
+            // side): `t_ema==0` lands in the `a_param ≤ q_param` branch of
+            // `buyback_cost_rao`, returning `u64::MAX`, so `cover_ema` saturates and
+            // `cover = c_l` ⇒ equity 0. A cold long can never refund pool-origin R.
+            let cover_live = u128::from(Self::buyback_cost_rao(a_live, t_live, d_rao));
+            let cover_ema = u128::from(Self::buyback_cost_rao(a_live, t_ema, d_rao));
+            let cover_rao = c_l_rao.min(cover_live.max(cover_ema));
+            let equity =
+                AlphaBalance::from(c_l_rao.saturating_sub(cover_rao).min(u128::from(u64::MAX)) as u64);
             if !equity.is_zero() {
                 Self::increase_stake_for_hotkey_and_coldkey_on_subnet(&pos.hotkey, &coldkey, netuid, equity);
                 SubnetAlphaOut::<T>::mutate(netuid, |o| *o = o.saturating_add(equity));
