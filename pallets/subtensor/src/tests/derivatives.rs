@@ -1677,6 +1677,37 @@ fn dereg_settles_longs() {
     });
 }
 
+// Regression guard for the dereg ORDERING contract: long terminal equity is
+// minted as alpha stake inside settle_longs_on_dereg and must be picked up by
+// the immediately-following destroy_alpha_in_out_stakes (which converts stake to
+// a TAO distribution). Here the trader's ONLY stake is the long collateral, so
+// any TAO they receive across the FULL do_dissolve_network path proves the
+// mint-before-stake-wipe ordering survives. If anyone reorders dissolve so the
+// wipe runs before settlement, this test fails (equity would be silently lost).
+#[test]
+fn dereg_long_equity_survives_full_dissolve_path() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_long(1000 * TAO, 1000 * TAO, 1.0);
+        let trader = U256::from(10);
+        let hotkey = U256::from(11);
+        // Exactly the collateral as stake (no other stake to mask the equity).
+        give_alpha(hotkey, trader, netuid, AlphaBalance::from(100 * TAO));
+        add_balance_to_coldkey_account(&trader, t(TAO)); // ED only
+        assert_ok!(SubtensorModule::open_long(RuntimeOrigin::signed(trader), hotkey, netuid, AlphaBalance::from(100 * TAO), TaoBalance::MAX));
+        let bal_before = bal(&trader);
+
+        assert_ok!(SubtensorModule::do_dissolve_network(netuid));
+
+        assert!(LongPositions::<Test>::get(netuid, trader).is_none());
+        // Equity (minted as stake by settlement) reached the trader as a TAO
+        // distribution from the subsequent stake-wipe — proving the ordering.
+        assert!(
+            bal(&trader) > bal_before,
+            "long equity must survive the full dissolve path as a TAO distribution"
+        );
+    });
+}
+
 // Fix: long collateral must be UNLOCKED alpha — opening a long against
 // locked alpha (which a normal unstake would block) is rejected, so it can't
 // be used to free locked stake.

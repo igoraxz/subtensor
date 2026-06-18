@@ -74,6 +74,7 @@ impl<T: Config> Pallet<T> {
 
     /// Open (or merge into) a covered long. Trader posts `position_input` Alpha
     /// (drawn from stake at `hotkey`).
+    #[frame_support::transactional]
     pub fn do_open_long(
         origin: OriginFor<T>,
         hotkey: T::AccountId,
@@ -202,6 +203,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Top up the carry buffer `R` with fresh Alpha (drawn from stake).
+    #[frame_support::transactional]
     pub fn do_top_up_long(
         origin: OriginFor<T>,
         netuid: NetUid,
@@ -241,6 +243,7 @@ impl<T: Config> Pallet<T> {
 
     /// Partial or full close. Trader repays `ρD` TAO into the pool and receives
     /// `ρ(P+R)` Alpha back as stake.
+    #[frame_support::transactional]
     pub fn do_close_long(
         origin: OriginFor<T>,
         netuid: NetUid,
@@ -312,6 +315,7 @@ impl<T: Config> Pallet<T> {
     /// Permissionless default once the buffer is dust and the grace window has
     /// elapsed. Restores residual Alpha, recycles the floor (left burned),
     /// extinguishes `D`.
+    #[frame_support::transactional]
     pub fn do_default_long(
         origin: OriginFor<T>,
         coldkey: T::AccountId,

@@ -87,7 +87,7 @@ because each open re-reads `ShortAggregate`.
 
 | File | Change | ~LOC |
 |---|---|---|
-| `derivatives/settle.rs` | `settle_shorts_on_dereg(netuid)` — for each short: materialize, `K_D=max(K_spot,last, Q·pEMA)`, pay `equity`, `recycle_tao(liability_cover)`, extinguish `Q`, clear | ~90 |
+| `derivatives/settle.rs` | `settle_shorts_on_dereg(netuid)` — for each short: materialize, `K_D=max(K_spot,last, K_EMA)` (slippage-aware CPMM buyback, not scalar `Q·pEMA`), pay `equity`, `recycle_tao(liability_cover)`, extinguish `Q`, clear | ~90 |
 | `coinbase/root.rs` (`do_dissolve_network`) | call `settle_shorts_on_dereg(netuid)` before `destroy_alpha_in_out_stakes` | ~2 |
 
 `K_spot,last(Q)` = `sim_swap(GetAlphaForTao, …)` cost to buy `Q` at the final executable state;

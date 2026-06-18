@@ -6,9 +6,20 @@ runtime, fixes the reserve-accounting model against the real AMM, and locks the 
 extrinsic, hook, and runtime-API surface. The companion `IMPLEMENTATION_PLAN.md` has the
 phased file-by-file plan and diff estimate.
 
-Launch scope is **shorts only**. Long paths are specified for symmetry but gated behind a
-disabled flag (spec §1, §9.3). Everything below is written to add the *fewest* moving parts
-by reusing primitives that already exist.
+Launch scope is **shorts-first**. The long side is now **fully implemented and wired**
+(`open_long`/`close_long`/`default_long`, decay, dereg settlement, read/RPC layer) but stays
+**flag-gated off** (`LongsEnabled=false`) until the long-side trading games pass; shorts enable
+first (`ShortsEnabled`). Everything below reuses primitives that already exist.
+
+**Price-reference caveat (load-bearing).** All risk references and the terminal `K_EMA` leg are
+built on `SubnetMovingPrice` (`pEMA`), which upstream updates as `EMA(min(spot, 1.0))` with a
+~30-day half-life and is `0` at cold start. Two consequences the safety arguments depend on:
+(1) `pEMA` is **capped at ~1.0 TAO/alpha** — for any subnet whose true price exceeds 1.0 the EMA
+leg saturates, so the conservative-reference and anti-suppression guarantees hold **only while
+price ≤ ~1.0** (true for every mainnet subnet today; max observed ≈0.018). (2) The slow half-life
+is what makes the terminal anti-attack margin work and is therefore a **governance-tuned
+invariant** — see §3.4. If upstream ever redefines the moving-price clamp or half-life, the
+derivative risk math must be re-validated.
 
 ---
 

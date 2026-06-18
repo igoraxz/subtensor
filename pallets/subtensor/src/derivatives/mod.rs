@@ -2,8 +2,8 @@
 //!
 //! Both sides are implemented and independently gated (`ShortsEnabled` /
 //! `LongsEnabled`, both default-off). Shorts live here; the long mirror is in
-//! `long.rs`. The client/RPC read layer (`quote_*`, `get_*`) currently exists
-//! for shorts only — long RPC parity is a tracked follow-up.
+//! `long.rs`. The client/RPC read layer (`quote_*`, `get_*`) exists for both
+//! sides (short views here, long views in `long.rs`).
 //!
 //! Custody model. Shorts park floor/buffer/escrow TAO in a dedicated per-subnet
 //! custody account; longs have no custody account and instead track parked Alpha
@@ -93,6 +93,9 @@ impl<T: Config> Pallet<T> {
         let t_live = Self::tao_f(SubnetTAO::<T>::get(netuid));
         let a_live = Self::alpha_f(SubnetAlphaIn::<T>::get(netuid));
         let pema = I64F64::from_num(Self::get_moving_alpha_price(netuid));
+        // `pema` is the upstream `min(spot,1.0)`-clamped moving price, so `pema ≤ ~1`
+        // and `pema·a_live ≤ a_live (≤ ~2e16 rao)` stays well inside I64F64 — no
+        // saturation. (The guarantees here hold for price ≤ ~1.0; see DESIGN.md.)
         let t_ema = pema.saturating_mul(a_live);
         // A cold price EMA (`pema == 0`, e.g. a freshly created subnet) must not
         // lock the market; fall back to the live reserve until it warms up.
@@ -149,14 +152,19 @@ impl<T: Config> Pallet<T> {
         let b = one
             .saturating_sub(lambda)
             .saturating_add(two.saturating_mul(lambda).saturating_mul(s).safe_div(t_ref));
-        // C = (−b + √(b² + 4aP)) / 2a
+        // Positive root of `a·C² + b·C − P = 0`. Use the cancellation-stable form
+        //   C = 2P / (b + √(b² + 4aP))
+        // rather than the algebraically-equal `(√(b²+4aP) − b) / 2a`: the latter
+        // subtracts two nearly-equal positives when `4aP ≪ b²` (small `a` = large
+        // pool / small position) and then divides by the tiny `2a`, compounding the
+        // catastrophic cancellation; the stable form sums two positives and never
+        // divides by `a` (it also limits gracefully to `P/b` as `a → 0`). This
+        // follows the codebase's preference for numerically-robust fixed-point math.
         let disc = b
             .saturating_mul(b)
             .saturating_add(four.saturating_mul(a).saturating_mul(p));
         let root = disc.checked_sqrt(sqrt_eps())?;
-        let c = root
-            .saturating_sub(b)
-            .safe_div(two.saturating_mul(a));
+        let c = two.saturating_mul(p).safe_div(b.saturating_add(root));
         let n = c.saturating_sub(p);
         if n <= I64F64::from_num(0) || c <= I64F64::from_num(0) {
             return None;
@@ -241,6 +249,7 @@ impl<T: Config> Pallet<T> {
     // ---- user operations (spec §8) -------------------------------------
 
     /// Open (or merge into) a covered short (spec §8.1, §8.6).
+    #[frame_support::transactional]
     pub fn do_open_short(
         origin: OriginFor<T>,
         hotkey: T::AccountId,
@@ -365,6 +374,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Top up the carry buffer `R` with fresh capital (spec §8.2).
+    #[frame_support::transactional]
     pub fn do_top_up_short(
         origin: OriginFor<T>,
         netuid: NetUid,
@@ -393,6 +403,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Partial (`fraction_ppb < 1e9`) or full (`= 1e9`) close (spec §8.3–8.5).
+    #[frame_support::transactional]
     pub fn do_close_short(
         origin: OriginFor<T>,
         netuid: NetUid,
@@ -479,6 +490,7 @@ impl<T: Config> Pallet<T> {
     }
 
     /// Permissionless default once the buffer has decayed to dust (spec §7.4).
+    #[frame_support::transactional]
     pub fn do_default_short(
         origin: OriginFor<T>,
         coldkey: T::AccountId,
@@ -530,7 +542,10 @@ impl<T: Config> Pallet<T> {
     // ---- per-block decay + restoration (spec §6.4–6.5, §12.4) ----------
 
     /// O(1)-per-subnet aggregate decay tick with one-sided TAO restoration zap.
-    /// Iterates only subnets with live short state (`ShortActiveSubnets`).
+    /// Iterates only subnets with live short state (`ShortActiveSubnets`), whose
+    /// size is bounded by the total subnet count (governance-capped), so the
+    /// per-block hook cost is O(active subnets) with O(1) work each — bounded, but
+    /// currently unmetered; real weight benchmarking is a tracked pre-mainnet item.
     pub fn run_short_decay() {
         let active: Vec<NetUid> = ShortActiveSubnets::<T>::iter_keys().collect();
         for netuid in active {
@@ -546,29 +561,40 @@ impl<T: Config> Pallet<T> {
             let dr = Self::mul_tao(agg.r_sigma, delta);
             let de = Self::mul_tao(agg.e_sigma, delta);
             let db = Self::mul_tao(agg.b_sigma, delta);
+            let restore = dr.saturating_add(de);
+
+            // Restoration zap FIRST, then commit the decay. The decayed R+E is moved
+            // from custody into the pool; only if that transfer actually lands do we
+            // advance Ω, shrink the aggregates, and credit reserves. If it fails
+            // (e.g. a dust shortfall) we leave the aggregate AND Ω untouched and
+            // retry next block — so the per-position `exp(−ΔΩ)` materialization can
+            // never decay ahead of TAO that is still sitting in custody (the
+            // custody ≥ obligations invariant holds even on a failed transfer, and
+            // a short custody can never inflate `SubnetTAO` / `TotalStake`).
+            if !restore.is_zero() {
+                let subnet_account = match Self::get_subnet_account_id(netuid) {
+                    Some(a) => a,
+                    None => continue,
+                };
+                if Self::transfer_tao(
+                    &Self::short_custody_account(netuid),
+                    &subnet_account,
+                    restore.into(),
+                )
+                .is_err()
+                {
+                    continue;
+                }
+                Self::increase_provided_tao_reserve(netuid, restore);
+                TotalStake::<T>::mutate(|t| *t = t.saturating_add(restore));
+            }
+
             agg.r_sigma = agg.r_sigma.saturating_sub(dr);
             agg.e_sigma = agg.e_sigma.saturating_sub(de);
             agg.b_sigma = agg.b_sigma.saturating_sub(db);
             // Ω ← Ω + (−ln(1−δ)), so a later exp(−ΔΩ) reproduces Π(1−δ) exactly.
             agg.omega = agg.omega.saturating_add(Self::neg_ln_one_minus(delta));
             ShortAggregate::<T>::insert(netuid, agg);
-
-            // Restoration zap: decayed R+E flows back into the pool (price drifts up).
-            // Credit reserves ONLY if the TAO actually moved, so a short custody
-            // can never inflate `SubnetTAO` / `TotalStake`.
-            let restore = dr.saturating_add(de);
-            if !restore.is_zero()
-                && let Some(subnet_account) = Self::get_subnet_account_id(netuid)
-                && Self::transfer_tao(
-                    &Self::short_custody_account(netuid),
-                    &subnet_account,
-                    restore.into(),
-                )
-                .is_ok()
-            {
-                Self::increase_provided_tao_reserve(netuid, restore);
-                TotalStake::<T>::mutate(|t| *t = t.saturating_add(restore));
-            }
         }
     }
 
@@ -669,21 +695,27 @@ impl<T: Config> Pallet<T> {
         ShortPositionCount::<T>::remove(netuid);
     }
 
-    /// Slippage-aware CPMM TAO cost (rao) to buy `q_rao` alpha against reserves
-    /// `(t_rao, a_rao)`: the exact constant-product amount `⌈t·q / (a − q)⌉`.
+    /// Slippage-aware CPMM cost — in the **pay** asset, rao — to acquire
+    /// `recv_amount` of the **recv** asset from a pool with reserves
+    /// `(pay_reserve, recv_reserve)`: the exact constant-product amount
+    /// `⌈pay_reserve · recv_amount / (recv_reserve − recv_amount)⌉`.
     ///
-    /// Computed in u128 so the `t·q` product (each operand up to ~2e16 rao =
-    /// total supply) cannot overflow, and **ceiling-rounded** so the terminal
-    /// liability cover is never under-charged (a conservative cover bounds the
-    /// equity an attacker can recover by forcing a deregistration). Saturates to
-    /// `u64::MAX` when the liability is un-buyable (`a ≤ q`), so `cover = C` and
-    /// `equity = 0` for that position.
-    fn buyback_cost_rao(t_rao: u128, a_rao: u128, q_rao: u128) -> u64 {
-        if a_rao <= q_rao {
+    /// The CPMM is symmetric in its two assets, so the **caller selects the
+    /// denomination by operand order** (the params are intentionally asset-neutral):
+    ///   - a short buying `Q` alpha with TAO  → `(T_reserve, A_reserve, Q)` → TAO cost;
+    ///   - a long  repaying `D` TAO with alpha → `(A_reserve, T_reserve, D)` → alpha cost.
+    ///
+    /// Computed in u128 so the product (each operand up to ~2e16 rao) cannot
+    /// overflow, and **ceiling-rounded** so the terminal cover is never
+    /// under-charged (bounding the equity an attacker can recover at a forced
+    /// deregistration). Saturates to `u64::MAX` when un-buyable
+    /// (`recv_amount ≥ recv_reserve`), giving `cover = C, equity = 0`.
+    fn buyback_cost_rao(pay_reserve: u128, recv_reserve: u128, recv_amount: u128) -> u64 {
+        if recv_reserve <= recv_amount {
             return u64::MAX;
         }
-        let num = t_rao.saturating_mul(q_rao);
-        let den = a_rao.saturating_sub(q_rao);
+        let num = pay_reserve.saturating_mul(recv_amount);
+        let den = recv_reserve.saturating_sub(recv_amount);
         num.div_ceil(den).min(u64::MAX as u128) as u64
     }
 
