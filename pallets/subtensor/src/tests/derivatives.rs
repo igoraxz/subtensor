@@ -253,6 +253,61 @@ fn open_short_wrong_hotkey_merge_strands_no_funds() {
     });
 }
 
+#[test]
+fn open_long_rejects_when_liability_exceeds_bound() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_long(1000 * TAO, 1000 * TAO, 1.0);
+        let trader = U256::from(10);
+        let hotkey = U256::from(11);
+        give_alpha(hotkey, trader, netuid, AlphaBalance::from(500 * TAO));
+        // A 1-rao TAO-liability cap is below any real D ⇒ rejected before any
+        // mutation (long-side mirror of the short execution bound).
+        assert_noop!(
+            SubtensorModule::open_long(
+                RuntimeOrigin::signed(trader),
+                hotkey,
+                netuid,
+                AlphaBalance::from(100 * TAO),
+                TaoBalance::from(1)
+            ),
+            Error::<Test>::SlippageTooHigh
+        );
+        assert!(LongPositions::<Test>::get(netuid, trader).is_none());
+    });
+}
+
+// Directly exercises the #[transactional] rollback: the trader's floor moves to
+// custody first, then the pool→custody transfer of N+E FAILS (subnet account
+// drained below it). The whole open must roll back — trader keeps their floor,
+// nothing lands in custody, and pool reserves are untouched. Without
+// #[transactional] the first transfer would persist and the trader would lose P.
+#[test]
+fn open_short_failed_pool_transfer_rolls_back_atomically() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_market(1000 * TAO, 1000 * TAO, 1.0);
+        let trader = U256::from(10);
+        add_balance_to_coldkey_account(&trader, t(1000 * TAO));
+        // Drain the subnet account so it cannot cover the N+E pool→custody leg
+        // (≈76 TAO for P=100), while SubnetTAO storage stays high for pricing.
+        let sa = SubtensorModule::get_subnet_account_id(netuid).unwrap();
+        remove_balance_from_coldkey_account(&sa, t(995 * TAO));
+
+        let trader_before = bal(&trader);
+        let tao_before = SubnetTAO::<Test>::get(netuid);
+
+        let r = SubtensorModule::open_short(
+            RuntimeOrigin::signed(trader), U256::from(11), netuid, t(100 * TAO), AlphaBalance::MAX);
+        assert!(r.is_err(), "open must fail when the pool leg can't be funded");
+
+        // Atomic rollback: floor returned, custody empty, reserves unchanged, no position.
+        assert_eq!(bal(&trader), trader_before, "floor must be rolled back to the trader");
+        assert_eq!(custody_bal(netuid), 0, "nothing may remain in custody");
+        assert_eq!(SubnetTAO::<Test>::get(netuid), tao_before, "pool reserve must be untouched");
+        assert!(ShortPositions::<Test>::get(netuid, trader).is_none());
+        assert!(!ShortActiveSubnets::<Test>::contains_key(netuid));
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Low liquidity (§4.1: λ_eff ≤ 0 rejects oversized opens)
 // ---------------------------------------------------------------------------
