@@ -1070,6 +1070,98 @@ fn proof_full_lifecycle_conserves_tao_and_alpha() {
     });
 }
 
+// PROOF (invariant): custody TAO always covers the materialized obligations
+// Σ(P + R(t) + E(t)) across decay — including at the DecayMax clamp extreme
+// (1.0/day), where the aggregate Σ-decay's faster flooring vs the per-position
+// exp decay is most stressed. Locks the "custody ≥ obligations" solvency claim
+// against future edits (architect M2).
+#[test]
+fn proof_custody_geq_obligations_under_decay() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_market(1000 * TAO, 1000 * TAO, 1.0);
+        SubtensorModule::set_decay_bounds_ppb(100_000_000, 1_000_000_000); // 10%..100%/day
+        let traders = [
+            (U256::from(10), U256::from(11)),
+            (U256::from(20), U256::from(21)),
+            (U256::from(30), U256::from(31)),
+        ];
+        for (c, h) in traders.iter() {
+            add_balance_to_coldkey_account(c, t(1000 * TAO));
+            give_alpha(*h, *c, netuid, AlphaBalance::from(1000 * TAO)); // alpha to repay Q on close
+        }
+        for (i, (c, h)) in traders.iter().enumerate() {
+            assert_ok!(SubtensorModule::open_short(
+                RuntimeOrigin::signed(*c), *h, netuid, t((20 + 10 * i as u64) * TAO), AlphaBalance::MAX));
+        }
+        // Σ materialized (floor + buffer + escrow) over every live position.
+        let obligations = |nid: NetUid| -> u64 {
+            traders
+                .iter()
+                .filter_map(|(c, _)| SubtensorModule::get_short_position(c, nid))
+                .map(|p| p.floor.to_u64() + p.buffer.to_u64() + p.escrow.to_u64())
+                .sum()
+        };
+        assert!(custody_bal(netuid) >= obligations(netuid), "custody < obligations at open");
+        for k in 0..3000 {
+            SubtensorModule::run_short_decay();
+            // Check every tick (not sampled): a one-block transient breach can't hide.
+            assert!(custody_bal(netuid) >= obligations(netuid), "custody < obligations during decay (block {k})");
+        }
+        // Mid-life partial close must preserve the invariant too.
+        assert_ok!(SubtensorModule::close_short(RuntimeOrigin::signed(traders[0].0), netuid, 400_000_000));
+        assert!(custody_bal(netuid) >= obligations(netuid), "custody < obligations after partial close");
+    });
+}
+
+// PROOF (invariant): the three denormalized bookkeeping copies stay in sync —
+// ShortPositionCount == |ShortPositions[netuid]|, and ShortActiveSubnets membership
+// iff the aggregate has any nonzero Σ — through an open/partial/full-close churn.
+// Guards the per-subnet position cap and bounded-dereg-work guarantees (architect M3).
+#[test]
+fn proof_position_count_matches_map_through_churn() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_market(1000 * TAO, 1000 * TAO, 1.0);
+        let traders = [
+            (U256::from(10), U256::from(11)),
+            (U256::from(20), U256::from(21)),
+            (U256::from(30), U256::from(31)),
+        ];
+        for (c, h) in traders.iter() {
+            add_balance_to_coldkey_account(c, t(1000 * TAO));
+            give_alpha(*h, *c, netuid, AlphaBalance::from(1000 * TAO)); // alpha to repay Q on close
+        }
+        let check = |nid: NetUid| {
+            let map_count = ShortPositions::<Test>::iter_prefix(nid).count() as u32;
+            assert_eq!(ShortPositionCount::<Test>::get(nid), map_count, "count != map size");
+            let agg = ShortAggregate::<Test>::get(nid);
+            let nonzero = !(agg.r_sigma.is_zero()
+                && agg.e_sigma.is_zero()
+                && agg.b_sigma.is_zero()
+                && agg.q_sigma.is_zero());
+            assert_eq!(
+                ShortActiveSubnets::<Test>::contains_key(nid), nonzero,
+                "active-set membership != nonzero aggregate"
+            );
+        };
+        check(netuid);
+        for (c, h) in traders.iter() {
+            assert_ok!(SubtensorModule::open_short(RuntimeOrigin::signed(*c), *h, netuid, t(30 * TAO), AlphaBalance::MAX));
+            check(netuid);
+        }
+        // partial close (count unchanged), then full closes (count decrements).
+        assert_ok!(SubtensorModule::close_short(RuntimeOrigin::signed(traders[0].0), netuid, 500_000_000));
+        check(netuid);
+        assert_ok!(SubtensorModule::close_short(RuntimeOrigin::signed(traders[1].0), netuid, 1_000_000_000));
+        check(netuid);
+        assert_ok!(SubtensorModule::close_short(RuntimeOrigin::signed(traders[0].0), netuid, 1_000_000_000));
+        check(netuid);
+        assert_ok!(SubtensorModule::close_short(RuntimeOrigin::signed(traders[2].0), netuid, 1_000_000_000));
+        check(netuid);
+        assert_eq!(ShortPositionCount::<Test>::get(netuid), 0);
+        assert!(!ShortActiveSubnets::<Test>::contains_key(netuid));
+    });
+}
+
 // PROOF: default reduces issuance by EXACTLY the recycled floor — no more, no
 // less — on both sides.
 #[test]
