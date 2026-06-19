@@ -2661,78 +2661,78 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 			.saturating_add(T::DbWeight::get().reads(6))
 			.saturating_add(T::DbWeight::get().writes(5))
 	}
-	/// Storage: `SubtensorModule::ShortActiveSubnets` (r:65 w:0)
+	/// Storage: `SubtensorModule::ShortActiveSubnets` (r:129 w:0)
 	/// Proof: `SubtensorModule::ShortActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::ShortAggregate` (r:64 w:64)
+	/// Storage: `SubtensorModule::ShortAggregate` (r:128 w:128)
 	/// Proof: `SubtensorModule::ShortAggregate` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::ShortKappa` (r:1 w:0)
 	/// Proof: `SubtensorModule::ShortKappa` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetTAO` (r:64 w:64)
+	/// Storage: `SubtensorModule::SubnetTAO` (r:128 w:128)
 	/// Proof: `SubtensorModule::SubnetTAO` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetAlphaIn` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetAlphaIn` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetAlphaIn` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetMechanism` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetMechanism` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetMechanism` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetMovingPrice` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetMovingPrice` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetMovingPrice` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::DecayMin` (r:1 w:0)
 	/// Proof: `SubtensorModule::DecayMin` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::DecayMax` (r:1 w:0)
 	/// Proof: `SubtensorModule::DecayMax` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::NetworksAdded` (r:64 w:0)
+	/// Storage: `SubtensorModule::NetworksAdded` (r:128 w:0)
 	/// Proof: `SubtensorModule::NetworksAdded` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `System::Account` (r:128 w:128)
+	/// Storage: `System::Account` (r:256 w:256)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(104), added: 2579, mode: `MaxEncodedLen`)
 	/// Storage: `SubtensorModule::TotalStake` (r:1 w:1)
 	/// Proof: `SubtensorModule::TotalStake` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// The range of component `s` is `[0, 64]`.
+	/// The range of component `s` is `[0, 128]`.
 	fn run_short_decay(s: u32, ) -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `704 + s * (340 ±0)`
-		//  Estimated: `4161 + s * (5158 ±0)`
+		//  Measured:  `608 + s * (343 ±0)`
+		//  Estimated: `4085 + s * (5158 ±0)`
 		// Minimum execution time: 3_000_000 picoseconds.
-		Weight::from_parts(29_149_660, 0)
-			.saturating_add(Weight::from_parts(0, 4161))
-			// Standard Error: 279_193
-			.saturating_add(Weight::from_parts(54_399_376, 0).saturating_mul(s.into()))
+		Weight::from_parts(3_000_000, 0)
+			.saturating_add(Weight::from_parts(0, 4085))
+			// Standard Error: 221_103
+			.saturating_add(Weight::from_parts(56_028_094, 0).saturating_mul(s.into()))
 			.saturating_add(T::DbWeight::get().reads(4))
 			.saturating_add(T::DbWeight::get().reads((9_u64).saturating_mul(s.into())))
 			.saturating_add(T::DbWeight::get().writes(1))
 			.saturating_add(T::DbWeight::get().writes((4_u64).saturating_mul(s.into())))
 			.saturating_add(Weight::from_parts(0, 5158).saturating_mul(s.into()))
 	}
-	/// Storage: `SubtensorModule::LongActiveSubnets` (r:65 w:0)
+	/// Storage: `SubtensorModule::LongActiveSubnets` (r:129 w:0)
 	/// Proof: `SubtensorModule::LongActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::LongAggregate` (r:64 w:64)
+	/// Storage: `SubtensorModule::LongAggregate` (r:128 w:128)
 	/// Proof: `SubtensorModule::LongAggregate` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::LongKappa` (r:1 w:0)
 	/// Proof: `SubtensorModule::LongKappa` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetAlphaIn` (r:64 w:64)
+	/// Storage: `SubtensorModule::SubnetAlphaIn` (r:128 w:128)
 	/// Proof: `SubtensorModule::SubnetAlphaIn` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetTAO` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetTAO` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetTAO` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetMechanism` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetMechanism` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetMechanism` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetMovingPrice` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetMovingPrice` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetMovingPrice` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::DecayMin` (r:1 w:0)
 	/// Proof: `SubtensorModule::DecayMin` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::DecayMax` (r:1 w:0)
 	/// Proof: `SubtensorModule::DecayMax` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// The range of component `s` is `[0, 64]`.
+	/// The range of component `s` is `[0, 128]`.
 	fn run_long_decay(s: u32, ) -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `897 + s * (111 ±0)`
-		//  Estimated: `4303 + s * (2588 ±0)`
+		//  Measured:  `904 + s * (111 ±0)`
+		//  Estimated: `4309 + s * (2587 ±0)`
 		// Minimum execution time: 3_000_000 picoseconds.
-		Weight::from_parts(15_361_211, 0)
-			.saturating_add(Weight::from_parts(0, 4303))
-			// Standard Error: 142_853
-			.saturating_add(Weight::from_parts(13_429_649, 0).saturating_mul(s.into()))
+		Weight::from_parts(48_978_054, 0)
+			.saturating_add(Weight::from_parts(0, 4309))
+			// Standard Error: 667_326
+			.saturating_add(Weight::from_parts(13_368_821, 0).saturating_mul(s.into()))
 			.saturating_add(T::DbWeight::get().reads(3))
 			.saturating_add(T::DbWeight::get().reads((6_u64).saturating_mul(s.into())))
 			.saturating_add(T::DbWeight::get().writes((2_u64).saturating_mul(s.into())))
-			.saturating_add(Weight::from_parts(0, 2588).saturating_mul(s.into()))
+			.saturating_add(Weight::from_parts(0, 2587).saturating_mul(s.into()))
 	}
 	/// Storage: `SubtensorModule::ShortAggregate` (r:1 w:1)
 	/// Proof: `SubtensorModule::ShortAggregate` (`max_values`: None, `max_size`: None, mode: `Measured`)
@@ -2746,9 +2746,9 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Proof: `SubtensorModule::SubnetAlphaIn` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::SubnetTAO` (r:1 w:1)
 	/// Proof: `SubtensorModule::SubnetTAO` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::ShortPositions` (r:129 w:128)
+	/// Storage: `SubtensorModule::ShortPositions` (r:1025 w:1024)
 	/// Proof: `SubtensorModule::ShortPositions` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `System::Account` (r:130 w:130)
+	/// Storage: `System::Account` (r:1026 w:1026)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(104), added: 2579, mode: `MaxEncodedLen`)
 	/// Storage: `SubtensorModule::TotalStake` (r:1 w:1)
 	/// Proof: `SubtensorModule::TotalStake` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
@@ -2758,21 +2758,21 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Proof: `SubtensorModule::ShortActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::ShortPositionCount` (r:0 w:1)
 	/// Proof: `SubtensorModule::ShortPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// The range of component `p` is `[0, 128]`.
+	/// The range of component `p` is `[0, 1024]`.
 	fn settle_shorts_on_dereg(p: u32, ) -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1318 + p * (153 ±0)`
-		//  Estimated: `5675 + p * (2629 ±0)`
-		// Minimum execution time: 63_000_000 picoseconds.
-		Weight::from_parts(82_605_750, 0)
-			.saturating_add(Weight::from_parts(0, 5675))
-			// Standard Error: 183_982
-			.saturating_add(Weight::from_parts(92_051_837, 0).saturating_mul(p.into()))
+		//  Measured:  `1365 + p * (152 ±0)`
+		//  Estimated: `5670 + p * (2628 ±0)`
+		// Minimum execution time: 62_000_000 picoseconds.
+		Weight::from_parts(62_000_000, 0)
+			.saturating_add(Weight::from_parts(0, 5670))
+			// Standard Error: 157_395
+			.saturating_add(Weight::from_parts(96_135_273, 0).saturating_mul(p.into()))
 			.saturating_add(T::DbWeight::get().reads(11))
 			.saturating_add(T::DbWeight::get().reads((2_u64).saturating_mul(p.into())))
 			.saturating_add(T::DbWeight::get().writes(7))
 			.saturating_add(T::DbWeight::get().writes((2_u64).saturating_mul(p.into())))
-			.saturating_add(Weight::from_parts(0, 2629).saturating_mul(p.into()))
+			.saturating_add(Weight::from_parts(0, 2628).saturating_mul(p.into()))
 	}
 	/// Storage: `SubtensorModule::LongAggregate` (r:1 w:1)
 	/// Proof: `SubtensorModule::LongAggregate` (`max_values`: None, `max_size`: None, mode: `Measured`)
@@ -2784,22 +2784,22 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Proof: `SubtensorModule::SubnetAlphaIn` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::SubnetTAO` (r:1 w:0)
 	/// Proof: `SubtensorModule::SubnetTAO` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::LongPositions` (r:129 w:128)
+	/// Storage: `SubtensorModule::LongPositions` (r:1025 w:1024)
 	/// Proof: `SubtensorModule::LongPositions` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::LongActiveSubnets` (r:0 w:1)
 	/// Proof: `SubtensorModule::LongActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::LongPositionCount` (r:0 w:1)
 	/// Proof: `SubtensorModule::LongPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// The range of component `p` is `[0, 128]`.
+	/// The range of component `p` is `[0, 1024]`.
 	fn settle_longs_on_dereg(p: u32, ) -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `921 + p * (152 ±0)`
-		//  Estimated: `4380 + p * (2628 ±0)`
-		// Minimum execution time: 27_000_000 picoseconds.
-		Weight::from_parts(28_469_270, 0)
-			.saturating_add(Weight::from_parts(0, 4380))
-			// Standard Error: 79_681
-			.saturating_add(Weight::from_parts(8_031_168, 0).saturating_mul(p.into()))
+		//  Measured:  `927 + p * (152 ±0)`
+		//  Estimated: `4407 + p * (2628 ±0)`
+		// Minimum execution time: 28_000_000 picoseconds.
+		Weight::from_parts(29_000_000, 0)
+			.saturating_add(Weight::from_parts(0, 4407))
+			// Standard Error: 32_540
+			.saturating_add(Weight::from_parts(8_248_039, 0).saturating_mul(p.into()))
 			.saturating_add(T::DbWeight::get().reads(6))
 			.saturating_add(T::DbWeight::get().reads((1_u64).saturating_mul(p.into())))
 			.saturating_add(T::DbWeight::get().writes(4))
@@ -5361,78 +5361,78 @@ impl WeightInfo for () {
 			.saturating_add(RocksDbWeight::get().reads(6))
 			.saturating_add(RocksDbWeight::get().writes(5))
 	}
-	/// Storage: `SubtensorModule::ShortActiveSubnets` (r:65 w:0)
+	/// Storage: `SubtensorModule::ShortActiveSubnets` (r:129 w:0)
 	/// Proof: `SubtensorModule::ShortActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::ShortAggregate` (r:64 w:64)
+	/// Storage: `SubtensorModule::ShortAggregate` (r:128 w:128)
 	/// Proof: `SubtensorModule::ShortAggregate` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::ShortKappa` (r:1 w:0)
 	/// Proof: `SubtensorModule::ShortKappa` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetTAO` (r:64 w:64)
+	/// Storage: `SubtensorModule::SubnetTAO` (r:128 w:128)
 	/// Proof: `SubtensorModule::SubnetTAO` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetAlphaIn` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetAlphaIn` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetAlphaIn` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetMechanism` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetMechanism` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetMechanism` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetMovingPrice` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetMovingPrice` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetMovingPrice` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::DecayMin` (r:1 w:0)
 	/// Proof: `SubtensorModule::DecayMin` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::DecayMax` (r:1 w:0)
 	/// Proof: `SubtensorModule::DecayMax` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::NetworksAdded` (r:64 w:0)
+	/// Storage: `SubtensorModule::NetworksAdded` (r:128 w:0)
 	/// Proof: `SubtensorModule::NetworksAdded` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `System::Account` (r:128 w:128)
+	/// Storage: `System::Account` (r:256 w:256)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(104), added: 2579, mode: `MaxEncodedLen`)
 	/// Storage: `SubtensorModule::TotalStake` (r:1 w:1)
 	/// Proof: `SubtensorModule::TotalStake` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// The range of component `s` is `[0, 64]`.
+	/// The range of component `s` is `[0, 128]`.
 	fn run_short_decay(s: u32, ) -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `704 + s * (340 ±0)`
-		//  Estimated: `4161 + s * (5158 ±0)`
+		//  Measured:  `608 + s * (343 ±0)`
+		//  Estimated: `4085 + s * (5158 ±0)`
 		// Minimum execution time: 3_000_000 picoseconds.
-		Weight::from_parts(29_149_660, 0)
-			.saturating_add(Weight::from_parts(0, 4161))
-			// Standard Error: 279_193
-			.saturating_add(Weight::from_parts(54_399_376, 0).saturating_mul(s.into()))
+		Weight::from_parts(3_000_000, 0)
+			.saturating_add(Weight::from_parts(0, 4085))
+			// Standard Error: 221_103
+			.saturating_add(Weight::from_parts(56_028_094, 0).saturating_mul(s.into()))
 			.saturating_add(RocksDbWeight::get().reads(4))
 			.saturating_add(RocksDbWeight::get().reads((9_u64).saturating_mul(s.into())))
 			.saturating_add(RocksDbWeight::get().writes(1))
 			.saturating_add(RocksDbWeight::get().writes((4_u64).saturating_mul(s.into())))
 			.saturating_add(Weight::from_parts(0, 5158).saturating_mul(s.into()))
 	}
-	/// Storage: `SubtensorModule::LongActiveSubnets` (r:65 w:0)
+	/// Storage: `SubtensorModule::LongActiveSubnets` (r:129 w:0)
 	/// Proof: `SubtensorModule::LongActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::LongAggregate` (r:64 w:64)
+	/// Storage: `SubtensorModule::LongAggregate` (r:128 w:128)
 	/// Proof: `SubtensorModule::LongAggregate` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::LongKappa` (r:1 w:0)
 	/// Proof: `SubtensorModule::LongKappa` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetAlphaIn` (r:64 w:64)
+	/// Storage: `SubtensorModule::SubnetAlphaIn` (r:128 w:128)
 	/// Proof: `SubtensorModule::SubnetAlphaIn` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetTAO` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetTAO` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetTAO` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetMechanism` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetMechanism` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetMechanism` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::SubnetMovingPrice` (r:64 w:0)
+	/// Storage: `SubtensorModule::SubnetMovingPrice` (r:128 w:0)
 	/// Proof: `SubtensorModule::SubnetMovingPrice` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::DecayMin` (r:1 w:0)
 	/// Proof: `SubtensorModule::DecayMin` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::DecayMax` (r:1 w:0)
 	/// Proof: `SubtensorModule::DecayMax` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
-	/// The range of component `s` is `[0, 64]`.
+	/// The range of component `s` is `[0, 128]`.
 	fn run_long_decay(s: u32, ) -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `897 + s * (111 ±0)`
-		//  Estimated: `4303 + s * (2588 ±0)`
+		//  Measured:  `904 + s * (111 ±0)`
+		//  Estimated: `4309 + s * (2587 ±0)`
 		// Minimum execution time: 3_000_000 picoseconds.
-		Weight::from_parts(15_361_211, 0)
-			.saturating_add(Weight::from_parts(0, 4303))
-			// Standard Error: 142_853
-			.saturating_add(Weight::from_parts(13_429_649, 0).saturating_mul(s.into()))
+		Weight::from_parts(48_978_054, 0)
+			.saturating_add(Weight::from_parts(0, 4309))
+			// Standard Error: 667_326
+			.saturating_add(Weight::from_parts(13_368_821, 0).saturating_mul(s.into()))
 			.saturating_add(RocksDbWeight::get().reads(3))
 			.saturating_add(RocksDbWeight::get().reads((6_u64).saturating_mul(s.into())))
 			.saturating_add(RocksDbWeight::get().writes((2_u64).saturating_mul(s.into())))
-			.saturating_add(Weight::from_parts(0, 2588).saturating_mul(s.into()))
+			.saturating_add(Weight::from_parts(0, 2587).saturating_mul(s.into()))
 	}
 	/// Storage: `SubtensorModule::ShortAggregate` (r:1 w:1)
 	/// Proof: `SubtensorModule::ShortAggregate` (`max_values`: None, `max_size`: None, mode: `Measured`)
@@ -5446,9 +5446,9 @@ impl WeightInfo for () {
 	/// Proof: `SubtensorModule::SubnetAlphaIn` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::SubnetTAO` (r:1 w:1)
 	/// Proof: `SubtensorModule::SubnetTAO` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::ShortPositions` (r:129 w:128)
+	/// Storage: `SubtensorModule::ShortPositions` (r:1025 w:1024)
 	/// Proof: `SubtensorModule::ShortPositions` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `System::Account` (r:130 w:130)
+	/// Storage: `System::Account` (r:1026 w:1026)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(104), added: 2579, mode: `MaxEncodedLen`)
 	/// Storage: `SubtensorModule::TotalStake` (r:1 w:1)
 	/// Proof: `SubtensorModule::TotalStake` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
@@ -5458,21 +5458,21 @@ impl WeightInfo for () {
 	/// Proof: `SubtensorModule::ShortActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::ShortPositionCount` (r:0 w:1)
 	/// Proof: `SubtensorModule::ShortPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// The range of component `p` is `[0, 128]`.
+	/// The range of component `p` is `[0, 1024]`.
 	fn settle_shorts_on_dereg(p: u32, ) -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1318 + p * (153 ±0)`
-		//  Estimated: `5675 + p * (2629 ±0)`
-		// Minimum execution time: 63_000_000 picoseconds.
-		Weight::from_parts(82_605_750, 0)
-			.saturating_add(Weight::from_parts(0, 5675))
-			// Standard Error: 183_982
-			.saturating_add(Weight::from_parts(92_051_837, 0).saturating_mul(p.into()))
+		//  Measured:  `1365 + p * (152 ±0)`
+		//  Estimated: `5670 + p * (2628 ±0)`
+		// Minimum execution time: 62_000_000 picoseconds.
+		Weight::from_parts(62_000_000, 0)
+			.saturating_add(Weight::from_parts(0, 5670))
+			// Standard Error: 157_395
+			.saturating_add(Weight::from_parts(96_135_273, 0).saturating_mul(p.into()))
 			.saturating_add(RocksDbWeight::get().reads(11))
 			.saturating_add(RocksDbWeight::get().reads((2_u64).saturating_mul(p.into())))
 			.saturating_add(RocksDbWeight::get().writes(7))
 			.saturating_add(RocksDbWeight::get().writes((2_u64).saturating_mul(p.into())))
-			.saturating_add(Weight::from_parts(0, 2629).saturating_mul(p.into()))
+			.saturating_add(Weight::from_parts(0, 2628).saturating_mul(p.into()))
 	}
 	/// Storage: `SubtensorModule::LongAggregate` (r:1 w:1)
 	/// Proof: `SubtensorModule::LongAggregate` (`max_values`: None, `max_size`: None, mode: `Measured`)
@@ -5484,22 +5484,22 @@ impl WeightInfo for () {
 	/// Proof: `SubtensorModule::SubnetAlphaIn` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::SubnetTAO` (r:1 w:0)
 	/// Proof: `SubtensorModule::SubnetTAO` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::LongPositions` (r:129 w:128)
+	/// Storage: `SubtensorModule::LongPositions` (r:1025 w:1024)
 	/// Proof: `SubtensorModule::LongPositions` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::LongActiveSubnets` (r:0 w:1)
 	/// Proof: `SubtensorModule::LongActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::LongPositionCount` (r:0 w:1)
 	/// Proof: `SubtensorModule::LongPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// The range of component `p` is `[0, 128]`.
+	/// The range of component `p` is `[0, 1024]`.
 	fn settle_longs_on_dereg(p: u32, ) -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `921 + p * (152 ±0)`
-		//  Estimated: `4380 + p * (2628 ±0)`
-		// Minimum execution time: 27_000_000 picoseconds.
-		Weight::from_parts(28_469_270, 0)
-			.saturating_add(Weight::from_parts(0, 4380))
-			// Standard Error: 79_681
-			.saturating_add(Weight::from_parts(8_031_168, 0).saturating_mul(p.into()))
+		//  Measured:  `927 + p * (152 ±0)`
+		//  Estimated: `4407 + p * (2628 ±0)`
+		// Minimum execution time: 28_000_000 picoseconds.
+		Weight::from_parts(29_000_000, 0)
+			.saturating_add(Weight::from_parts(0, 4407))
+			// Standard Error: 32_540
+			.saturating_add(Weight::from_parts(8_248_039, 0).saturating_mul(p.into()))
 			.saturating_add(RocksDbWeight::get().reads(6))
 			.saturating_add(RocksDbWeight::get().reads((1_u64).saturating_mul(p.into())))
 			.saturating_add(RocksDbWeight::get().writes(4))

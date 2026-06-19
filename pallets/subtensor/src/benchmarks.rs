@@ -2451,7 +2451,7 @@ mod pallet_benchmarks {
 
     /// Per-block short decay over `s` active subnets (O(s), the block-step hook cost).
     #[benchmark]
-    fn run_short_decay(s: Linear<0, 64>) {
+    fn run_short_decay(s: Linear<0, 128>) {
         Subtensor::<T>::set_shorts_enabled(true);
         for i in 0..s {
             let netuid = NetUid::from((i + 1) as u16);
@@ -2480,7 +2480,7 @@ mod pallet_benchmarks {
 
     /// Per-block long decay over `s` active subnets.
     #[benchmark]
-    fn run_long_decay(s: Linear<0, 64>) {
+    fn run_long_decay(s: Linear<0, 128>) {
         Subtensor::<T>::set_longs_enabled(true);
         for i in 0..s {
             let netuid = NetUid::from((i + 1) as u16);
@@ -2505,7 +2505,7 @@ mod pallet_benchmarks {
 
     /// Terminal short settlement over `p` positions on one subnet (dereg sweep, O(p)).
     #[benchmark]
-    fn settle_shorts_on_dereg(p: Linear<0, 128>) {
+    fn settle_shorts_on_dereg(p: Linear<0, 1024>) {
         let netuid = NetUid::from(1);
         deriv_subnet::<T>(netuid);
         add_balance_to_coldkey_account::<T>(
@@ -2550,7 +2550,7 @@ mod pallet_benchmarks {
 
     /// Terminal long settlement over `p` positions on one subnet.
     #[benchmark]
-    fn settle_longs_on_dereg(p: Linear<0, 128>) {
+    fn settle_longs_on_dereg(p: Linear<0, 1024>) {
         let netuid = NetUid::from(1);
         deriv_subnet::<T>(netuid);
         let unit = 1_000_000_000u64;
