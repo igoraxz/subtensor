@@ -215,8 +215,10 @@ default-restore, plus recycled floor/liability-cover, **equals** the `N + E` rem
 reserve math and is the first item in the spec's trading-games suite (§14.5).
 
 > **Primary implementation risk:** reconciling the spec's CPMM closed-forms with the Balancer
-> weights. Mitigation: quote/size from closed-forms, realize from the engine, gate launch on the
-> conservation + capacity simulations the spec already mandates (§14.5). `κ_S` starts tiny.
+> weights. Mitigation: quote/size from closed-forms and **realize as one-sided reserve mutations**
+> (CPMM-internal accounting — the authoritative model above, *not* fee/weight-aware engine swaps),
+> gate launch on the conservation + capacity simulations the spec already mandates (§14.5). `κ_S`
+> starts tiny.
 
 ---
 

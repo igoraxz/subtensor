@@ -6,10 +6,13 @@ Scope: the pool-borrowing covered shorts/longs feature on the Alpha/TAO CPMM
 the branch and an overall score.
 
 **Overall QA & test score: 9/10.** All CI-grade gates green, comprehensive unit
-coverage on both sides, three independent adversarial reviews passed, and a full
-on-chain lifecycle exercised on a live local chain. The single point deducted is
-for the two explicitly-deferred pre-mainnet items (benchmarked weights; the
-adversarial trading-games gate) — neither is a code-correctness gap.
+coverage on both sides, four independent adversarial review rounds passed, and a
+full on-chain lifecycle exercised on a live local chain. Weight benchmarks are now
+implemented and wired (extrinsics + the O(N) decay/dereg hooks); the remaining
+pre-mainnet items are operational gates, not code-correctness gaps: regenerating
+the weight constants on CI reference hardware, and the adversarial trading-games
+matrix (incl. the EMA-slowness safety margin) before any `κ` ramp or
+`ShortsEnabled` flip.
 
 ---
 
@@ -106,11 +109,19 @@ decay restore-then-commit ordering; cancellation-stable `solve_collateral`.
 
 ## 7. Residual / out-of-scope (tracked, not code-correctness gaps)
 
-- **Benchmarked weights** — the per-block decay hook is bounded (O(active subnets),
-  subnet-count-capped) but unmetered; extrinsics use placeholder `DbWeight`. Real
-  benchmarking is required before mainnet enablement.
+- **Benchmarked weights** — *now implemented:* FRAME v2 benchmarks exist for all 8
+  extrinsics plus the O(N) hooks (`run_short_decay`/`run_long_decay` with an
+  active-subnet component, `settle_shorts_on_dereg`/`settle_longs_on_dereg` with a
+  position component); the 8 dispatches use `T::WeightInfo::*`, `on_initialize`
+  charges the per-block decay, and the dissolve extrinsics charge terminal
+  settlement at the position ceiling. The only remaining step is regenerating the
+  weight constants on CI reference hardware (`--extrinsic '*'`) before mainnet
+  enablement — the harness/wiring is in place, so that is a one-command regen.
 - **Adversarial trading-games gate** on a mainnet-like replica before any `κ` ramp
-  or `ShortsEnabled` flip.
-- A clean **successful long open on-chain** was not demonstrated (the test subnet's
-  alpha reserve was depleted by the short trading) — it is covered by unit tests
-  (`long_dereg_in_the_money_pays_bounded_equity`, conservation proofs).
+  or `ShortsEnabled` flip — including the EMA-slowness matrix (EMA half-life × `κ` ×
+  pool depth × attacker capital × dereg distance × registration timing × spot-buy
+  defense) that the short-to-dereg safety margin depends on.
+- A clean **successful long open on-chain** was subsequently demonstrated on a
+  mainnet-seeded localnet (`open_long` P=1.0α → D liability at spot, full close
+  clears); also covered by unit tests (`long_dereg_in_the_money_pays_bounded_equity`,
+  conservation proofs).
