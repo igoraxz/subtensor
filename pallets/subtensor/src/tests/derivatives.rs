@@ -2003,7 +2003,8 @@ fn proof_custody_geq_obligations_under_decay() {
 // PROOF (invariant): the three denormalized bookkeeping copies stay in sync —
 // ShortPositionCount == |ShortPositions[netuid]|, and ShortActiveSubnets membership
 // iff the aggregate has any nonzero Σ — through an open/partial/full-close churn.
-// Guards the per-subnet position cap and bounded-dereg-work guarantees (architect M3).
+// Guards the denormalized count/active-set bookkeeping the dereg settlement weight
+// charge and empty/active detection rely on (there is no per-subnet position cap).
 #[test]
 fn proof_position_count_matches_map_through_churn() {
     new_test_ext(1).execute_with(|| {

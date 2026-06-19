@@ -178,7 +178,8 @@ impl<T: Config> Pallet<T> {
                 existing
             }
             None => {
-                // Position limit was validated before any mutation above.
+                // No per-subnet position cap; maintain the denormalized count used
+                // for the dereg settlement weight charge and active-set detection.
                 let count = LongPositionCount::<T>::get(netuid);
                 LongPositionCount::<T>::insert(netuid, count.saturating_add(1));
                 LongPosition {

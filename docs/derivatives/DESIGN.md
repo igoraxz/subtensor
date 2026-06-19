@@ -188,6 +188,20 @@ pro-rata; aggregates updated.
   naturally safe (the cold leg hits the un-buyable sentinel → cover = collateral). equity =
   `max(0, (P+R) − K_D)` paid to trader; `min(P+R, K_D)` recycled outside terminal distribution; `Q`
   extinguished. Hooked into `do_dissolve_network` before `destroy_alpha_in_out_stakes`.
+- **Settlement model — immediate sweep, no protocol cap on position count.** Derivative
+  terminal settlement follows the **same immediate enumerate-and-settle model as native
+  subnet alpha liquidation** (`destroy_alpha_in_out_stakes`): on deregistration every open
+  position on the subnet is enumerated and settled in one pass (largest-remainder-free,
+  split-neutral pro-rata cover, equity credited directly). The open-position count is
+  **not protocol-capped** — there is no `MAX_POSITIONS_CEILING` and no governance
+  `Short/LongMaxPositions` limit. Settlement work is bounded *operationally* by the
+  economic cost of opening a position (floor `P` + escrow, the `κ` capacity limit on
+  aggregate liability, and the min-input floor), exactly the way native liquidation relies
+  on the cost of acquiring stake. This is architecturally consistent with existing subnet
+  dereg (immediate holder sweep + direct coldkey crediting); it does not introduce a new
+  unbounded-work class. The settlement `WeightInfo` is benchmarked over a calibration range
+  of `p ∈ [0,1024]` and charged at the *actual* per-subnet position count — `[0,1024]` is a
+  benchmark calibration range, **not** a consensus-enforced cap.
   **Governance invariant — the price EMA must be SLOW (short-dereg / whale-extortion defense).**
   The terminal `K_EMA` leg is the *only* thing that keeps a short's dereg payout bounded when an
   attacker — or a whale extorting a subnet — deliberately drives the subnet toward deregistration.

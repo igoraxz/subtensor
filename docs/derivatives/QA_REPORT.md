@@ -132,7 +132,10 @@ state or governance configuration that can drift after merge.
    `κ` × pool depth × attacker capital × dereg distance × registration timing ×
    spot-buy defense. The short-to-dereg safety margin and the one-sided
    reserve-accounting approximation (intentional divergence from fee/weighted spot
-   execution) are only valid once this passes.
+   execution) are only valid once this passes. **Must include position-count stress**
+   (not just economics): drive a subnet to a high synthetic open-position count within
+   the `κ`/min-input bounds and confirm the immediate dereg sweep stays within block
+   weight/latency.
 2. **`pEMA` dependency is load-bearing.** The safety math assumes
    `SubnetMovingPrice = EMA(min(spot, 1.0))` with a slow half-life. If upstream
    changes the `min(·,1.0)` clamp or the half-life, the derivative anti-suppression
@@ -149,8 +152,17 @@ state or governance configuration that can drift after merge.
    per-subnet open-position cap (parity with the uncapped alpha-stake unwind); position
    count is bounded only by the κ capacity limit and min-input. If the subnet count is
    raised above 128, or subnets routinely carry more than 1024 positions, regenerate the
-   corresponding weights to re-validate linearity.
-5. **CI reference-hardware weight regen** (`--extrinsic '*'`) — wiring is in place.
+   corresponding weights to re-validate linearity. `[0,1024]` is a benchmark calibration
+   range, **not** a consensus-enforced cap — terminal settlement is an immediate
+   enumerate-and-settle sweep (see DESIGN.md §3.4), modelled on native alpha liquidation.
+5. **CI reference-hardware weight regen** (`--extrinsic '*'`) — wiring is in place. Note:
+   `open_short`/`open_long` still carry an auto-generated `Short/LongMaxPositions` storage-read
+   annotation in `weights.rs` from before the cap was removed; this over-charges one DB read
+   (safe direction) and is cleared by this regen.
+6. **Dereg weight/latency monitoring** — on a mainnet-seeded localnet, exercise
+   `dissolve_network` against subnets carrying high synthetic short/long position counts and
+   record settlement weight + wall-clock, confirming the immediate sweep stays within block
+   limits at the counts the `κ`/min-input economics actually permit.
 
 ### 7.2 Accepted tradeoffs (intentional, not blockers)
 

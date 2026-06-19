@@ -359,8 +359,10 @@ impl<T: Config> Pallet<T> {
                 existing
             }
             None => {
-                // Position limit was validated before any mutation above; bump
-                // the per-subnet count so dereg settlement work stays bounded.
+                // No per-subnet position cap (terminal dereg is an immediate
+                // enumerate-and-settle sweep, like native alpha liquidation). Bump
+                // the denormalized count used for the dereg settlement weight charge
+                // and empty/active-set detection.
                 let count = ShortPositionCount::<T>::get(netuid);
                 ShortPositionCount::<T>::insert(netuid, count.saturating_add(1));
                 ShortPosition {
