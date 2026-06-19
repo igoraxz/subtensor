@@ -111,17 +111,46 @@ decay restore-then-commit ordering; cancellation-stable `solve_collateral`.
 
 - **Benchmarked weights** — *now implemented:* FRAME v2 benchmarks exist for all 8
   extrinsics plus the O(N) hooks (`run_short_decay`/`run_long_decay` with an
-  active-subnet component, `settle_shorts_on_dereg`/`settle_longs_on_dereg` with a
-  position component); the 8 dispatches use `T::WeightInfo::*`, `on_initialize`
-  charges the per-block decay, and the dissolve extrinsics charge terminal
-  settlement at the position ceiling. The only remaining step is regenerating the
-  weight constants on CI reference hardware (`--extrinsic '*'`) before mainnet
-  enablement — the harness/wiring is in place, so that is a one-command regen.
-- **Adversarial trading-games gate** on a mainnet-like replica before any `κ` ramp
-  or `ShortsEnabled` flip — including the EMA-slowness matrix (EMA half-life × `κ` ×
-  pool depth × attacker capital × dereg distance × registration timing × spot-buy
-  defense) that the short-to-dereg safety margin depends on.
+  active-subnet component over `[0,128]`, `settle_shorts_on_dereg`/`settle_longs_on_dereg`
+  with a position component over `[0,1024]`); the 8 dispatches use `T::WeightInfo::*`,
+  `on_initialize` charges the per-block decay at `TotalNetworks`, and the dissolve
+  extrinsics charge terminal settlement at the *actual* per-subnet position count.
+  The remaining step is regenerating the weight constants on CI reference hardware
+  (`--extrinsic '*'`) before mainnet enablement — the harness/wiring is in place.
 - A clean **successful long open on-chain** was subsequently demonstrated on a
   mainnet-seeded localnet (`open_long` P=1.0α → D liability at spot, full close
   clears); also covered by unit tests (`long_dereg_in_the_money_pays_bounded_equity`,
   conservation proofs).
+
+### 7.1 Pre-enablement checklist (must clear before `ShortsEnabled`/`κ` ramp)
+
+These are integration dependencies and operational invariants, not code-correctness
+gaps. They must be re-verified at enablement time because they depend on upstream
+state or governance configuration that can drift after merge.
+
+1. **Adversarial trading-games matrix** on a mainnet-like replica — EMA half-life ×
+   `κ` × pool depth × attacker capital × dereg distance × registration timing ×
+   spot-buy defense. The short-to-dereg safety margin and the one-sided
+   reserve-accounting approximation (intentional divergence from fee/weighted spot
+   execution) are only valid once this passes.
+2. **`pEMA` dependency is load-bearing.** The safety math assumes
+   `SubnetMovingPrice = EMA(min(spot, 1.0))` with a slow half-life. If upstream
+   changes the `min(·,1.0)` clamp or the half-life, the derivative anti-suppression
+   math must be revalidated before enablement.
+3. **High-price-subnet caveat.** Because `pEMA` is clamped around 1.0, the terminal
+   anti-suppression guarantee is stated only for subnets priced below ~1.0 (true for
+   all mainnet subnets today). Confirm this still holds at enablement.
+4. **Decay weight vs subnet count.** Decay `WeightInfo` is benchmarked over `[0,128]`
+   (= `DefaultSubnetLimit`). The hook conservatively charges `TotalNetworks` (≥ active
+   derivative subnets), so it slightly over-charges block weight by design. If the
+   subnet limit is ever raised above 128, regenerate the decay weights at the new
+   ceiling (or clamp/paginate the hook) first.
+5. **CI reference-hardware weight regen** (`--extrinsic '*'`) — wiring is in place.
+
+### 7.2 Accepted tradeoffs (intentional, not blockers)
+
+- **Terminal transfer failure = log + sweep, not abort.** A custody-invariant breach
+  during dereg settlement logs loudly and the unpaid value stays in custody to be
+  swept (recycled), rather than aborting the dereg. No value is created/lost and the
+  emitted `equity` reflects only what was actually paid; the position is underpaid
+  rather than the subnet bricked on a dust shortfall. Intentional.

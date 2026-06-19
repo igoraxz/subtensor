@@ -582,9 +582,9 @@ impl<T: Config> Pallet<T> {
 
     /// O(1)-per-subnet aggregate decay tick with one-sided TAO restoration zap.
     /// Iterates only subnets with live short state (`ShortActiveSubnets`), whose
-    /// size is bounded by the total subnet count (governance-capped), so the
-    /// per-block hook cost is O(active subnets) with O(1) work each — bounded, but
-    /// currently unmetered; real weight benchmarking is a tracked pre-mainnet item.
+    /// size is bounded by the total subnet count, so the per-block hook cost is
+    /// O(active subnets) with O(1) work each. Metered in `on_initialize` via
+    /// `WeightInfo::run_short_decay(TotalNetworks)` (benchmarked over [0,128]).
     pub fn run_short_decay() {
         let active: Vec<NetUid> = ShortActiveSubnets::<T>::iter_keys().collect();
         for netuid in active {
