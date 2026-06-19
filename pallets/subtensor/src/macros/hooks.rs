@@ -18,6 +18,19 @@ mod hooks {
             let hotkey_swap_clean_up_weight = Self::clean_up_hotkey_swap_records(block_number);
 
             let block_step_result = Self::block_step();
+            // Account the per-block derivative decay hooks (run_short/long_decay,
+            // invoked inside block_step). Cost is O(active derivative subnets) via
+            // the per-subnet aggregate + Ω index (NOT per-position); bound by the
+            // total subnet count.
+            //
+            // OPERATIONAL INVARIANT: the decay WeightInfo is benchmarked over the
+            // component range [0, 128] (the current DefaultSubnetLimit). If the
+            // subnet count is ever raised above 128, the decay weights must be
+            // regenerated at the new ceiling (or this hook must clamp/paginate)
+            // before that limit is lifted.
+            let n = TotalNetworks::<T>::get() as u32;
+            let decay_weight = <T as Config>::WeightInfo::run_short_decay(n)
+                .saturating_add(<T as Config>::WeightInfo::run_long_decay(n));
             match block_step_result {
                 Ok(_) => {
                     // --- If the block step was successful, return the weight.
@@ -26,6 +39,7 @@ mod hooks {
                         .saturating_add(T::DbWeight::get().reads(8304_u64))
                         .saturating_add(T::DbWeight::get().writes(110_u64))
                         .saturating_add(hotkey_swap_clean_up_weight)
+                        .saturating_add(decay_weight)
                 }
                 Err(e) => {
                     // --- If the block step was unsuccessful, return the weight anyway.
@@ -34,6 +48,7 @@ mod hooks {
                         .saturating_add(T::DbWeight::get().reads(8304_u64))
                         .saturating_add(T::DbWeight::get().writes(110_u64))
                         .saturating_add(hotkey_swap_clean_up_weight)
+                        .saturating_add(decay_weight)
                 }
             }
         }

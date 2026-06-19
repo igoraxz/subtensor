@@ -1229,11 +1229,19 @@ mod dispatches {
         }
 
         /// Remove a user's subnetwork
-        /// The caller must be the owner of the network
+        /// The caller must be root.
         #[pallet::call_index(61)]
         #[pallet::weight(Weight::from_parts(119_000_000, 0)
 		.saturating_add(T::DbWeight::get().reads(6))
-		.saturating_add(T::DbWeight::get().writes(31)))]
+		.saturating_add(T::DbWeight::get().writes(31))
+		// Terminal derivative settlement (O(positions/subnet), like the alpha-stake
+		// unwind in do_dissolve_network); charge the benchmarked linear settlement
+		// weight at the actual per-subnet position counts. Root-only extrinsic.
+		// Linearity is benchmarked over [0,1024]; counts above that extrapolate the
+		// per-position slope (scaled, not under-charged) — regen if subnets routinely
+		// carry more than 1024 positions.
+		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::ShortPositionCount::<T>::get(netuid)))
+		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::LongPositionCount::<T>::get(netuid))))]
         pub fn dissolve_network(
             origin: OriginFor<T>,
             _coldkey: T::AccountId,
@@ -2144,7 +2152,15 @@ mod dispatches {
         #[pallet::call_index(120)]
         #[pallet::weight(Weight::from_parts(119_000_000, 0)
 		.saturating_add(T::DbWeight::get().reads(6))
-		.saturating_add(T::DbWeight::get().writes(31)))]
+		.saturating_add(T::DbWeight::get().writes(31))
+		// Terminal derivative settlement (O(positions/subnet), like the alpha-stake
+		// unwind in do_dissolve_network); charge the benchmarked linear settlement
+		// weight at the actual per-subnet position counts. Root-only extrinsic.
+		// Linearity is benchmarked over [0,1024]; counts above that extrapolate the
+		// per-position slope (scaled, not under-charged) — regen if subnets routinely
+		// carry more than 1024 positions.
+		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::ShortPositionCount::<T>::get(netuid)))
+		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::LongPositionCount::<T>::get(netuid))))]
         pub fn root_dissolve_network(origin: OriginFor<T>, netuid: NetUid) -> DispatchResult {
             ensure_root(origin)?;
             Self::do_dissolve_network(netuid)
@@ -2592,6 +2608,98 @@ mod dispatches {
         ) -> DispatchResult {
             let coldkey = ensure_signed(origin)?;
             Self::do_set_perpetual_lock(&coldkey, netuid, enabled)
+        }
+
+        /// Open (or merge into) a covered short with floor input `position_input`.
+        #[pallet::call_index(139)]
+        #[pallet::weight(<T as Config>::WeightInfo::open_short())]
+        pub fn open_short(
+            origin: OriginFor<T>,
+            hotkey: T::AccountId,
+            netuid: NetUid,
+            position_input: TaoBalance,
+            max_alpha_liability: AlphaBalance,
+        ) -> DispatchResult {
+            Self::do_open_short(origin, hotkey, netuid, position_input, max_alpha_liability)
+        }
+
+        /// Top up a covered short's carry buffer with fresh capital.
+        #[pallet::call_index(140)]
+        #[pallet::weight(<T as Config>::WeightInfo::top_up_short())]
+        pub fn top_up_short(
+            origin: OriginFor<T>,
+            netuid: NetUid,
+            amount: TaoBalance,
+        ) -> DispatchResult {
+            Self::do_top_up_short(origin, netuid, amount)
+        }
+
+        /// Close `fraction_ppb / 1e9` of a covered short (`1e9` = full close).
+        #[pallet::call_index(141)]
+        #[pallet::weight(<T as Config>::WeightInfo::close_short())]
+        pub fn close_short(
+            origin: OriginFor<T>,
+            netuid: NetUid,
+            fraction_ppb: u64,
+        ) -> DispatchResult {
+            Self::do_close_short(origin, netuid, fraction_ppb)
+        }
+
+        /// Permissionlessly default a covered short whose buffer reached dust.
+        #[pallet::call_index(142)]
+        #[pallet::weight(<T as Config>::WeightInfo::default_short())]
+        pub fn default_short(
+            origin: OriginFor<T>,
+            coldkey: T::AccountId,
+            netuid: NetUid,
+        ) -> DispatchResult {
+            Self::do_default_short(origin, coldkey, netuid)
+        }
+
+        /// Open (or merge into) a covered long with floor Alpha `position_input`.
+        #[pallet::call_index(143)]
+        #[pallet::weight(<T as Config>::WeightInfo::open_long())]
+        pub fn open_long(
+            origin: OriginFor<T>,
+            hotkey: T::AccountId,
+            netuid: NetUid,
+            position_input: AlphaBalance,
+            max_tao_liability: TaoBalance,
+        ) -> DispatchResult {
+            Self::do_open_long(origin, hotkey, netuid, position_input, max_tao_liability)
+        }
+
+        /// Top up a covered long's carry buffer with fresh Alpha.
+        #[pallet::call_index(144)]
+        #[pallet::weight(<T as Config>::WeightInfo::top_up_long())]
+        pub fn top_up_long(
+            origin: OriginFor<T>,
+            netuid: NetUid,
+            amount: AlphaBalance,
+        ) -> DispatchResult {
+            Self::do_top_up_long(origin, netuid, amount)
+        }
+
+        /// Close `fraction_ppb / 1e9` of a covered long (`1e9` = full close).
+        #[pallet::call_index(145)]
+        #[pallet::weight(<T as Config>::WeightInfo::close_long())]
+        pub fn close_long(
+            origin: OriginFor<T>,
+            netuid: NetUid,
+            fraction_ppb: u64,
+        ) -> DispatchResult {
+            Self::do_close_long(origin, netuid, fraction_ppb)
+        }
+
+        /// Permissionlessly default a covered long whose buffer reached dust.
+        #[pallet::call_index(146)]
+        #[pallet::weight(<T as Config>::WeightInfo::default_long())]
+        pub fn default_long(
+            origin: OriginFor<T>,
+            coldkey: T::AccountId,
+            netuid: NetUid,
+        ) -> DispatchResult {
+            Self::do_default_long(origin, coldkey, netuid)
         }
     }
 }

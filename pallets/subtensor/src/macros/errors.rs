@@ -301,5 +301,42 @@ mod errors {
         CannotUseSystemAccount,
         /// Trying to unlock more than locked
         UnlockAmountTooHigh,
+        /// Short-side derivatives are disabled.
+        ShortsDisabled,
+        /// The subnet is not a dynamic (AMM) subnet.
+        SubnetNotDynamic,
+        /// No short position exists for this coldkey on the subnet.
+        ShortPositionNotFound,
+        /// Effective LTV is non-positive at current utilization.
+        EffectiveLtvNonPositive,
+        /// Retained proceeds would be non-positive.
+        RetainedProceedsNonPositive,
+        /// Open would exceed the active short footprint cap.
+        ShortCapacityExceeded,
+        /// Open violates the remove-and-sell-back square-root domain.
+        ReserveDomainExceeded,
+        /// Close fraction must be in (0, 1e9].
+        InvalidCloseFraction,
+        /// Trader does not hold enough alpha to repay the liability.
+        InsufficientAlphaToClose,
+        /// Position has not decayed to dust and is not default-eligible.
+        PositionNotDefaultEligible,
+        /// Additional open targets a different hotkey than the existing position.
+        ShortHotkeyMismatch,
+        /// Long-side derivatives are disabled.
+        LongsDisabled,
+        /// No long position exists for this coldkey on the subnet.
+        LongPositionNotFound,
+        /// Open would exceed the active long footprint cap.
+        LongCapacityExceeded,
+        /// Additional open targets a different hotkey than the existing position.
+        LongHotkeyMismatch,
+        /// Trader does not hold enough alpha collateral to open/extend the long.
+        InsufficientCollateral,
+        /// Derivative open requires a warm price EMA (`pEMA > 0`). The subnet's
+        /// moving price is still cold (freshly registered / no price history),
+        /// where the EMA risk reference and terminal anti-suppression leg are
+        /// unavailable, so opens are blocked until the EMA warms.
+        ColdEmaNotAllowed,
     }
 }
