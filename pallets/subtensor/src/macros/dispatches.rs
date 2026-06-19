@@ -1233,7 +1233,11 @@ mod dispatches {
         #[pallet::call_index(61)]
         #[pallet::weight(Weight::from_parts(119_000_000, 0)
 		.saturating_add(T::DbWeight::get().reads(6))
-		.saturating_add(T::DbWeight::get().writes(31)))]
+		.saturating_add(T::DbWeight::get().writes(31))
+		// Terminal derivative settlement (O(positions/subnet)); charge the worst
+		// case at the hard position ceiling so the dispatch weight bounds it.
+		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::derivatives::MAX_POSITIONS_CEILING))
+		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::derivatives::MAX_POSITIONS_CEILING)))]
         pub fn dissolve_network(
             origin: OriginFor<T>,
             _coldkey: T::AccountId,
@@ -2144,7 +2148,11 @@ mod dispatches {
         #[pallet::call_index(120)]
         #[pallet::weight(Weight::from_parts(119_000_000, 0)
 		.saturating_add(T::DbWeight::get().reads(6))
-		.saturating_add(T::DbWeight::get().writes(31)))]
+		.saturating_add(T::DbWeight::get().writes(31))
+		// Terminal derivative settlement (O(positions/subnet)); charge the worst
+		// case at the hard position ceiling so the dispatch weight bounds it.
+		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::derivatives::MAX_POSITIONS_CEILING))
+		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::derivatives::MAX_POSITIONS_CEILING)))]
         pub fn root_dissolve_network(origin: OriginFor<T>, netuid: NetUid) -> DispatchResult {
             ensure_root(origin)?;
             Self::do_dissolve_network(netuid)

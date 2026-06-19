@@ -868,8 +868,7 @@ impl<T: Config> Pallet<T> {
         // unavailable exactly when an open would be rejected: cold EMA
         // (`ColdEmaNotAllowed`) and below-minimum input (`AmountTooLow`). Capacity
         // and the reserve-domain bound are checked below via the same solves.
-        if !(Self::get_moving_alpha_price(netuid) > 0) || position_input < ShortMinInput::<T>::get()
-        {
+        if Self::get_moving_alpha_price(netuid) == 0 || position_input < ShortMinInput::<T>::get() {
             return None;
         }
         let agg = ShortAggregate::<T>::get(netuid);

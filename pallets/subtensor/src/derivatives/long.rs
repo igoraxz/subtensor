@@ -538,8 +538,7 @@ impl<T: Config> Pallet<T> {
         }
         // Mirror the open-time non-user-specific rejections (cold EMA, below-min
         // input); capacity + reserve-domain are checked below via the same solves.
-        if !(Self::get_moving_alpha_price(netuid) > 0) || position_input < LongMinInput::<T>::get()
-        {
+        if Self::get_moving_alpha_price(netuid) == 0 || position_input < LongMinInput::<T>::get() {
             return None;
         }
         let agg = LongAggregate::<T>::get(netuid);
