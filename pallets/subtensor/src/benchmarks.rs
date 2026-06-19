@@ -17,7 +17,7 @@ use sp_runtime::{
 };
 use sp_std::collections::btree_set::BTreeSet;
 use sp_std::vec;
-use substrate_fixed::types::U64F64;
+use substrate_fixed::types::{I64F64, I96F32, U64F64};
 use subtensor_runtime_common::{AlphaBalance, NetUid, TaoBalance};
 use subtensor_swap_interface::SwapHandler;
 
@@ -2256,6 +2256,334 @@ mod pallet_benchmarks {
             AssociatedEvmAddress::<T>::get(netuid, uid),
             Some((evm_key, block_number))
         );
+    }
+
+    // ---- covered derivatives (spec v3.6.1) -----------------------------
+
+    /// Build a dynamic subnet with warm EMA + deep reserves, and fund the per-subnet
+    /// pool account so pool→custody transfers at open succeed.
+    fn deriv_subnet<T: Config>(netuid: NetUid) {
+        Subtensor::<T>::init_new_network(netuid, 1);
+        SubtokenEnabled::<T>::insert(netuid, true);
+        SubnetMechanism::<T>::insert(netuid, 1);
+        SubnetTAO::<T>::insert(netuid, TaoBalance::from(1_000_000_000_000_000u64));
+        SubnetAlphaIn::<T>::insert(netuid, AlphaBalance::from(100_000_000_000_000_000u64));
+        SubnetAlphaOut::<T>::insert(netuid, AlphaBalance::from(100_000_000_000_000_000u64));
+        SubnetMovingPrice::<T>::insert(netuid, I96F32::from_num(0.01));
+        if let Some(sa) = Subtensor::<T>::get_subnet_account_id(netuid) {
+            add_balance_to_coldkey_account::<T>(&sa, TaoBalance::from(1_000_000_000_000_000u64));
+        }
+    }
+
+    /// A funded trader holding TAO and (for long/close) alpha collateral on `hotkey`.
+    fn deriv_trader<T: Config>(netuid: NetUid, seed: u32) -> (T::AccountId, T::AccountId) {
+        let coldkey: T::AccountId = account("DerivCold", 0, seed);
+        let hotkey: T::AccountId = account("DerivHot", 0, seed);
+        add_balance_to_coldkey_account::<T>(&coldkey, TaoBalance::from(1_000_000_000_000_000u64));
+        let alpha = AlphaBalance::from(10_000_000_000_000u64);
+        Subtensor::<T>::increase_stake_for_hotkey_and_coldkey_on_subnet(
+            &hotkey, &coldkey, netuid, alpha,
+        );
+        SubnetAlphaOut::<T>::mutate(netuid, |o| *o = o.saturating_add(alpha));
+        (coldkey, hotkey)
+    }
+
+    #[benchmark]
+    fn open_short() {
+        let netuid = NetUid::from(1);
+        deriv_subnet::<T>(netuid);
+        Subtensor::<T>::set_shorts_enabled(true);
+        Subtensor::<T>::set_short_kappa_ppb(900_000_000);
+        let (coldkey, hotkey) = deriv_trader::<T>(netuid, 1);
+        #[extrinsic_call]
+        _(
+            RawOrigin::Signed(coldkey),
+            hotkey,
+            netuid,
+            TaoBalance::from(1_000_000_000u64),
+            AlphaBalance::MAX,
+        );
+    }
+
+    #[benchmark]
+    fn top_up_short() {
+        let netuid = NetUid::from(1);
+        deriv_subnet::<T>(netuid);
+        Subtensor::<T>::set_shorts_enabled(true);
+        Subtensor::<T>::set_short_kappa_ppb(900_000_000);
+        let (coldkey, hotkey) = deriv_trader::<T>(netuid, 1);
+        assert_ok!(Subtensor::<T>::open_short(
+            RawOrigin::Signed(coldkey.clone()).into(),
+            hotkey,
+            netuid,
+            TaoBalance::from(1_000_000_000u64),
+            AlphaBalance::MAX
+        ));
+        #[extrinsic_call]
+        _(
+            RawOrigin::Signed(coldkey),
+            netuid,
+            TaoBalance::from(500_000_000u64),
+        );
+    }
+
+    #[benchmark]
+    fn close_short() {
+        let netuid = NetUid::from(1);
+        deriv_subnet::<T>(netuid);
+        Subtensor::<T>::set_shorts_enabled(true);
+        Subtensor::<T>::set_short_kappa_ppb(900_000_000);
+        let (coldkey, hotkey) = deriv_trader::<T>(netuid, 1);
+        assert_ok!(Subtensor::<T>::open_short(
+            RawOrigin::Signed(coldkey.clone()).into(),
+            hotkey,
+            netuid,
+            TaoBalance::from(1_000_000_000u64),
+            AlphaBalance::MAX
+        ));
+        #[extrinsic_call]
+        _(RawOrigin::Signed(coldkey), netuid, 1_000_000_000u64);
+    }
+
+    #[benchmark]
+    fn default_short() {
+        let netuid = NetUid::from(1);
+        deriv_subnet::<T>(netuid);
+        Subtensor::<T>::set_shorts_enabled(true);
+        Subtensor::<T>::set_short_kappa_ppb(900_000_000);
+        Subtensor::<T>::set_short_dust(TaoBalance::from(u64::MAX));
+        Subtensor::<T>::set_short_default_grace(0);
+        let (coldkey, hotkey) = deriv_trader::<T>(netuid, 1);
+        assert_ok!(Subtensor::<T>::open_short(
+            RawOrigin::Signed(coldkey.clone()).into(),
+            hotkey,
+            netuid,
+            TaoBalance::from(1_000_000_000u64),
+            AlphaBalance::MAX
+        ));
+        let caller: T::AccountId = account("Defaulter", 0, 9);
+        add_balance_to_coldkey_account::<T>(&caller, TaoBalance::from(1_000_000_000u64));
+        #[extrinsic_call]
+        _(RawOrigin::Signed(caller), coldkey, netuid);
+    }
+
+    #[benchmark]
+    fn open_long() {
+        let netuid = NetUid::from(1);
+        deriv_subnet::<T>(netuid);
+        Subtensor::<T>::set_longs_enabled(true);
+        Subtensor::<T>::set_long_kappa_ppb(900_000_000);
+        let (coldkey, hotkey) = deriv_trader::<T>(netuid, 1);
+        #[extrinsic_call]
+        _(
+            RawOrigin::Signed(coldkey),
+            hotkey,
+            netuid,
+            AlphaBalance::from(1_000_000_000u64),
+            TaoBalance::MAX,
+        );
+    }
+
+    #[benchmark]
+    fn top_up_long() {
+        let netuid = NetUid::from(1);
+        deriv_subnet::<T>(netuid);
+        Subtensor::<T>::set_longs_enabled(true);
+        Subtensor::<T>::set_long_kappa_ppb(900_000_000);
+        let (coldkey, hotkey) = deriv_trader::<T>(netuid, 1);
+        assert_ok!(Subtensor::<T>::open_long(
+            RawOrigin::Signed(coldkey.clone()).into(),
+            hotkey,
+            netuid,
+            AlphaBalance::from(1_000_000_000u64),
+            TaoBalance::MAX
+        ));
+        #[extrinsic_call]
+        _(
+            RawOrigin::Signed(coldkey),
+            netuid,
+            AlphaBalance::from(500_000_000u64),
+        );
+    }
+
+    #[benchmark]
+    fn close_long() {
+        let netuid = NetUid::from(1);
+        deriv_subnet::<T>(netuid);
+        Subtensor::<T>::set_longs_enabled(true);
+        Subtensor::<T>::set_long_kappa_ppb(900_000_000);
+        let (coldkey, hotkey) = deriv_trader::<T>(netuid, 1);
+        assert_ok!(Subtensor::<T>::open_long(
+            RawOrigin::Signed(coldkey.clone()).into(),
+            hotkey,
+            netuid,
+            AlphaBalance::from(1_000_000_000u64),
+            TaoBalance::MAX
+        ));
+        #[extrinsic_call]
+        _(RawOrigin::Signed(coldkey), netuid, 1_000_000_000u64);
+    }
+
+    #[benchmark]
+    fn default_long() {
+        let netuid = NetUid::from(1);
+        deriv_subnet::<T>(netuid);
+        Subtensor::<T>::set_longs_enabled(true);
+        Subtensor::<T>::set_long_kappa_ppb(900_000_000);
+        Subtensor::<T>::set_long_dust(AlphaBalance::from(u64::MAX));
+        Subtensor::<T>::set_long_default_grace(0);
+        let (coldkey, hotkey) = deriv_trader::<T>(netuid, 1);
+        assert_ok!(Subtensor::<T>::open_long(
+            RawOrigin::Signed(coldkey.clone()).into(),
+            hotkey,
+            netuid,
+            AlphaBalance::from(1_000_000_000u64),
+            TaoBalance::MAX
+        ));
+        let caller: T::AccountId = account("Defaulter", 0, 9);
+        add_balance_to_coldkey_account::<T>(&caller, TaoBalance::from(1_000_000_000u64));
+        #[extrinsic_call]
+        _(RawOrigin::Signed(caller), coldkey, netuid);
+    }
+
+    /// Per-block short decay over `s` active subnets (O(s), the block-step hook cost).
+    #[benchmark]
+    fn run_short_decay(s: Linear<0, 64>) {
+        Subtensor::<T>::set_shorts_enabled(true);
+        for i in 0..s {
+            let netuid = NetUid::from((i + 1) as u16);
+            deriv_subnet::<T>(netuid);
+            ShortAggregate::<T>::insert(
+                netuid,
+                crate::derivatives::ShortAgg {
+                    r_sigma: TaoBalance::from(1_000_000_000u64),
+                    e_sigma: TaoBalance::from(1_000_000_000u64),
+                    b_sigma: TaoBalance::from(1_000_000_000u64),
+                    q_sigma: AlphaBalance::from(1_000_000_000u64),
+                    omega: I64F64::from_num(0),
+                },
+            );
+            ShortActiveSubnets::<T>::insert(netuid, ());
+            add_balance_to_coldkey_account::<T>(
+                &Subtensor::<T>::short_custody_account(netuid),
+                TaoBalance::from(1_000_000_000_000u64),
+            );
+        }
+        #[block]
+        {
+            Subtensor::<T>::run_short_decay();
+        }
+    }
+
+    /// Per-block long decay over `s` active subnets.
+    #[benchmark]
+    fn run_long_decay(s: Linear<0, 64>) {
+        Subtensor::<T>::set_longs_enabled(true);
+        for i in 0..s {
+            let netuid = NetUid::from((i + 1) as u16);
+            deriv_subnet::<T>(netuid);
+            LongAggregate::<T>::insert(
+                netuid,
+                crate::derivatives::LongAgg {
+                    r_sigma: AlphaBalance::from(1_000_000_000u64),
+                    e_sigma: AlphaBalance::from(1_000_000_000u64),
+                    b_sigma: AlphaBalance::from(1_000_000_000u64),
+                    d_sigma: TaoBalance::from(1_000_000_000u64),
+                    omega: I64F64::from_num(0),
+                },
+            );
+            LongActiveSubnets::<T>::insert(netuid, ());
+        }
+        #[block]
+        {
+            Subtensor::<T>::run_long_decay();
+        }
+    }
+
+    /// Terminal short settlement over `p` positions on one subnet (dereg sweep, O(p)).
+    #[benchmark]
+    fn settle_shorts_on_dereg(p: Linear<0, 128>) {
+        let netuid = NetUid::from(1);
+        deriv_subnet::<T>(netuid);
+        add_balance_to_coldkey_account::<T>(
+            &Subtensor::<T>::short_custody_account(netuid),
+            TaoBalance::from(1_000_000_000_000_000u64),
+        );
+        let unit = 1_000_000_000u64;
+        for i in 0..p {
+            let ck: T::AccountId = account("SetCold", 0, i);
+            let hk: T::AccountId = account("SetHot", 0, i);
+            ShortPositions::<T>::insert(
+                netuid,
+                &ck,
+                crate::derivatives::ShortPosition {
+                    hotkey: hk,
+                    p_floor: TaoBalance::from(unit),
+                    q_liability: AlphaBalance::from(unit),
+                    r_stored: TaoBalance::from(unit),
+                    e_stored: TaoBalance::from(unit),
+                    b_stored: TaoBalance::from(unit),
+                    omega_entry: I64F64::from_num(0),
+                    last_active: 0,
+                },
+            );
+        }
+        ShortPositionCount::<T>::insert(netuid, p);
+        ShortAggregate::<T>::insert(
+            netuid,
+            crate::derivatives::ShortAgg {
+                r_sigma: TaoBalance::from(unit.saturating_mul(p as u64)),
+                e_sigma: TaoBalance::from(unit.saturating_mul(p as u64)),
+                b_sigma: TaoBalance::from(unit.saturating_mul(p as u64)),
+                q_sigma: AlphaBalance::from(unit.saturating_mul(p as u64)),
+                omega: I64F64::from_num(0),
+            },
+        );
+        #[block]
+        {
+            Subtensor::<T>::settle_shorts_on_dereg(netuid);
+        }
+    }
+
+    /// Terminal long settlement over `p` positions on one subnet.
+    #[benchmark]
+    fn settle_longs_on_dereg(p: Linear<0, 128>) {
+        let netuid = NetUid::from(1);
+        deriv_subnet::<T>(netuid);
+        let unit = 1_000_000_000u64;
+        for i in 0..p {
+            let ck: T::AccountId = account("SetCold", 0, i);
+            let hk: T::AccountId = account("SetHot", 0, i);
+            LongPositions::<T>::insert(
+                netuid,
+                &ck,
+                crate::derivatives::LongPosition {
+                    hotkey: hk,
+                    p_floor: AlphaBalance::from(unit),
+                    d_liability: TaoBalance::from(unit),
+                    r_stored: AlphaBalance::from(unit),
+                    e_stored: AlphaBalance::from(unit),
+                    b_stored: AlphaBalance::from(unit),
+                    omega_entry: I64F64::from_num(0),
+                    last_active: 0,
+                },
+            );
+        }
+        LongPositionCount::<T>::insert(netuid, p);
+        LongAggregate::<T>::insert(
+            netuid,
+            crate::derivatives::LongAgg {
+                r_sigma: AlphaBalance::from(unit.saturating_mul(p as u64)),
+                e_sigma: AlphaBalance::from(unit.saturating_mul(p as u64)),
+                b_sigma: AlphaBalance::from(unit.saturating_mul(p as u64)),
+                d_sigma: TaoBalance::from(unit.saturating_mul(p as u64)),
+                omega: I64F64::from_num(0),
+            },
+        );
+        #[block]
+        {
+            Subtensor::<T>::settle_longs_on_dereg(netuid);
+        }
     }
 
     impl_benchmark_test_suite!(
