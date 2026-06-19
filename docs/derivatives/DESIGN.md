@@ -21,6 +21,28 @@ is what makes the terminal anti-attack margin work and is therefore a **governan
 invariant** — see §3.4. If upstream ever redefines the moving-price clamp or half-life, the
 derivative risk math must be re-validated.
 
+**Spec upgrades required (intended deviations from v3.6.1 text).** The implementation deliberately
+diverges from three literal spec formulas. In every case the divergence is toward a *more
+conservative* realization against the live AMM that never under-charges an attacker. These are
+**intended** — the code is the source of truth and the spec text should be **upgraded** to match;
+they are not bugs:
+
+1. **Terminal `K_EMA` is a slippage-aware CPMM buyback, not the scalar `Q·pEMA`** (spec §11.4,
+   §15.5, Appendix A.6). A scalar understates the TAO cost of repurchasing a large `Q` from a
+   finite pool. The implementation prices `K_EMA` as the CPMM buyback `⌈t·q/(a−q)⌉` (u128,
+   ceiling-rounded) against the EMA-implied reserve `T_EMA = pEMA·A_live`, with a cold-EMA floor
+   `K_D ≥ R`. Consequence: the §15.5 worked example (`K_EMA = 66` for `Q = 3900`) **no longer
+   reproduces** for large `Q` — the realized CPMM cost is strictly higher. This strengthens the
+   anti-extraction margin (§3.4) and must be folded into the spec's settlement formula and example.
+2. **Restoration zap is a one-sided reserve credit, not the min-swap-plus-balanced-add** (spec
+   §6.5/§6.6). Net CPMM effect is equivalent for a single full-range position; on a fee/weighted
+   pool the two forms differ and the reconciliation is gated on the trading-games suite (§14.5).
+3. **Close/terminal settlement zap is a one-sided pair of increments, not the balanced settlement
+   zap** (spec §8.5). Same rationale and gate as (2).
+
+Action: upgrade the v3.6.1 spec text (settlement formula §11.4/A.6, the §15.5 example, and the zap
+definitions §6.6/§8.5) so the authoritative document matches the conservative implementation.
+
 ---
 
 ## 1. Reality check: what the spec assumes vs. what subtensor has
@@ -132,9 +154,24 @@ pro-rata; aggregates updated.
   naturally safe (the cold leg hits the un-buyable sentinel → cover = collateral). equity =
   `max(0, (P+R) − K_D)` paid to trader; `min(P+R, K_D)` recycled outside terminal distribution; `Q`
   extinguished. Hooked into `do_dissolve_network` before `destroy_alpha_in_out_stakes`.
-  Governance note: tune `SubnetMovingPrice` half-life (EMA speed) and `κ` (max price lift) together so
-  carry paid while forcing a dereg exceeds the bounded equity recovery — i.e. attacking a subnet to
-  dereg it is never net-profitable.
+  **Governance invariant — the price EMA must be SLOW (short-dereg / whale-extortion defense).**
+  The terminal `K_EMA` leg is the *only* thing that keeps a short's dereg payout bounded when an
+  attacker — or a whale extorting a subnet — deliberately drives the subnet toward deregistration.
+  Because `K_D = max(K_spot, K_EMA)`, a *fast* EMA would track the attacker's crashed spot downward,
+  collapse `K_D`, and hand the attacker a cheap terminal buyback (a free short-to-dereg extraction).
+  The `SubnetMovingPrice` half-life must therefore be **slow relative to the realistic time to force
+  a dereg**, so that over the whole suppression window:
+
+      Σ carry paid (decay on R+E, every block)   ≥   bounded terminal equity max(0, (P+R) − K_D)
+
+  holds with margin. Mechanism: while spot is suppressed, a slow `K_EMA` stays near the *pre-attack*
+  price, so `K_D` stays high and terminal equity stays ≈ 0 (verified on-chain — a pre-dereg spot
+  crash paid equity = 0), while the attacker keeps paying utilization carry on `R + E` every block
+  for the entire window. Tune the EMA half-life together with `κ` (which bounds how far one short can
+  move price — short impact *saturates* near `1 − √(1 − δ)`, so a single position cannot crash spot
+  to zero; see §A.3) so that a short-driven deregistration is **never net-profitable**. A short /
+  fast half-life **breaks this guarantee and must not be set**; if upstream shortens the moving-price
+  half-life, the short-dereg margin must be re-validated before `κ` is ramped.
 
 ### 3.5 Conservation invariant (must be a test)
 
