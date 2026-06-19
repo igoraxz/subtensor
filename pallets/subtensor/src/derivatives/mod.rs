@@ -329,14 +329,8 @@ impl<T: Config> Pallet<T> {
         // Validate-before-mutate: all fallible eligibility checks that do not
         // depend on the realized legs run BEFORE any funds move, so a rejected
         // open never strands custody TAO or desyncs pool/`TotalStake` accounting.
-        match ShortPositions::<T>::get(netuid, &coldkey) {
-            Some(existing) => {
-                ensure!(existing.hotkey == hotkey, Error::<T>::ShortHotkeyMismatch)
-            }
-            None => ensure!(
-                ShortPositionCount::<T>::get(netuid) < ShortMaxPositions::<T>::get(),
-                Error::<T>::ShortPositionLimit
-            ),
+        if let Some(existing) = ShortPositions::<T>::get(netuid, &coldkey) {
+            ensure!(existing.hotkey == hotkey, Error::<T>::ShortHotkeyMismatch);
         }
 
         let custody = Self::short_custody_account(netuid);
@@ -860,13 +854,6 @@ impl<T: Config> Pallet<T> {
     }
     pub fn set_short_min_input(min_input: TaoBalance) {
         ShortMinInput::<T>::put(min_input);
-    }
-    pub fn set_short_max_positions(max: u32) {
-        // Governance-configured per-subnet open-position limit (enforced at open).
-        // No hard compile-time ceiling: terminal dereg settlement is O(positions)
-        // like the existing alpha-stake unwind, and the dissolve extrinsic charges
-        // the benchmarked settlement weight at the actual position count.
-        ShortMaxPositions::<T>::put(max);
     }
 
     // ---- read-only quote (spec §1.2) -----------------------------------

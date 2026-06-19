@@ -1427,14 +1427,6 @@ pub mod pallet {
         TaoBalance::from(100_000_000u64)
     }
     #[pallet::type_value]
-    /// Max open positions per subnet per side. Bounds deregistration-settlement
-    /// work so a heavily-traded subnet stays prunable within block weight.
-    /// Kept conservative; production should move to incremental/paginated
-    /// terminal settlement before raising it materially.
-    pub fn DefaultShortMaxPositions<T: Config>() -> u32 {
-        128
-    }
-    #[pallet::type_value]
     /// Empty short-side aggregate.
     pub fn DefaultShortAgg<T: Config>() -> crate::derivatives::ShortAgg {
         crate::derivatives::ShortAgg::zero()
@@ -1486,11 +1478,6 @@ pub mod pallet {
     /// decay tick iterates only active subnets instead of all of them.
     #[pallet::storage]
     pub type ShortActiveSubnets<T: Config> = StorageMap<_, Identity, NetUid, (), OptionQuery>;
-
-    /// Max open short positions per subnet (deregistration-work bound).
-    #[pallet::storage]
-    pub type ShortMaxPositions<T: Config> =
-        StorageValue<_, u32, ValueQuery, DefaultShortMaxPositions<T>>;
 
     /// --- MAP ( netuid ) --> count of open short positions on the subnet.
     #[pallet::storage]
@@ -1555,11 +1542,6 @@ pub mod pallet {
     #[pallet::storage]
     pub type LongMinInput<T: Config> =
         StorageValue<_, AlphaBalance, ValueQuery, DefaultLongMinInput<T>>;
-
-    /// Max open long positions per subnet (deregistration-work bound).
-    #[pallet::storage]
-    pub type LongMaxPositions<T: Config> =
-        StorageValue<_, u32, ValueQuery, DefaultShortMaxPositions<T>>;
 
     /// Long-side anti-snipe default grace period, in blocks (independent of the
     /// short grace so the two sides can be tuned separately).

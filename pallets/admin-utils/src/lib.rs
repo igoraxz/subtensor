@@ -2347,15 +2347,6 @@ pub mod pallet {
             Ok(())
         }
 
-        /// Set the maximum number of open short positions per subnet.
-        #[pallet::call_index(103)]
-        #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(0, 1))]
-        pub fn sudo_set_short_max_positions(origin: OriginFor<T>, max: u32) -> DispatchResult {
-            ensure_root(origin)?;
-            pallet_subtensor::Pallet::<T>::set_short_max_positions(max);
-            Ok(())
-        }
-
         /// Enable or disable long-side covered derivatives (launch gate).
         #[pallet::call_index(104)]
         #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(0, 1))]
@@ -2398,15 +2389,6 @@ pub mod pallet {
         pub fn sudo_set_long_min_input(origin: OriginFor<T>, min_input_rao: u64) -> DispatchResult {
             ensure_root(origin)?;
             pallet_subtensor::Pallet::<T>::set_long_min_input(min_input_rao.into());
-            Ok(())
-        }
-
-        /// Set the maximum number of open long positions per subnet.
-        #[pallet::call_index(109)]
-        #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(0, 1))]
-        pub fn sudo_set_long_max_positions(origin: OriginFor<T>, max: u32) -> DispatchResult {
-            ensure_root(origin)?;
-            pallet_subtensor::Pallet::<T>::set_long_max_positions(max);
             Ok(())
         }
 

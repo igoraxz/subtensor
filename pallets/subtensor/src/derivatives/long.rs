@@ -132,14 +132,10 @@ impl<T: Config> Pallet<T> {
         // `TaoBalance::MAX` opts out of the bound.
         ensure!(d_tao <= max_tao_liability, Error::<T>::SlippageTooHigh);
 
-        // Validate-before-mutate: merge hotkey and position-limit checks run before
-        // any stake/reserve mutation, so a rejected open never burns/strands Alpha.
-        match LongPositions::<T>::get(netuid, &coldkey) {
-            Some(existing) => ensure!(existing.hotkey == hotkey, Error::<T>::LongHotkeyMismatch),
-            None => ensure!(
-                LongPositionCount::<T>::get(netuid) < LongMaxPositions::<T>::get(),
-                Error::<T>::LongPositionLimit
-            ),
+        // Validate-before-mutate: the merge hotkey check runs before any
+        // stake/reserve mutation, so a rejected open never burns/strands Alpha.
+        if let Some(existing) = LongPositions::<T>::get(netuid, &coldkey) {
+            ensure!(existing.hotkey == hotkey, Error::<T>::LongHotkeyMismatch);
         }
 
         // Trader posts P Alpha from stake; remove N+E Alpha from the pool. All
@@ -512,11 +508,6 @@ impl<T: Config> Pallet<T> {
     }
     pub fn set_long_min_input(min_input: AlphaBalance) {
         LongMinInput::<T>::put(min_input);
-    }
-    pub fn set_long_max_positions(max: u32) {
-        // Governance-configured per-subnet open-position limit (enforced at open);
-        // no hard compile-time ceiling (parity with the short side / alpha unwind).
-        LongMaxPositions::<T>::put(max);
     }
 
     // ---- read-only views (mirror of the short read layer) --------------

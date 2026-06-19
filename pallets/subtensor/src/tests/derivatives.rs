@@ -1774,13 +1774,12 @@ fn open_max_liability_bound_opts_out() {
     });
 }
 
-// Fix (M4): per-subnet open-position count is capped and maintained, bounding
-// deregistration-settlement work.
+// Per-subnet open-position count is maintained (increment on open, decrement on
+// close, no double-count on merge) — it feeds the dereg-settlement weight charge.
 #[test]
-fn position_count_cap_enforced_and_maintained() {
+fn position_count_maintained() {
     new_test_ext(1).execute_with(|| {
         let netuid = setup_market(1000 * TAO, 1000 * TAO, 1.0);
-        SubtensorModule::set_short_max_positions(2);
         let (a, b, c) = (U256::from(10), U256::from(20), U256::from(30));
         for k in [a, b, c] {
             add_balance_to_coldkey_account(&k, t(1000 * TAO));
@@ -1802,19 +1801,7 @@ fn position_count_cap_enforced_and_maintained() {
         ));
         assert_eq!(ShortPositionCount::<Test>::get(netuid), 2);
 
-        // Third distinct position exceeds the cap.
-        assert_noop!(
-            SubtensorModule::open_short(
-                RuntimeOrigin::signed(c),
-                U256::from(31),
-                netuid,
-                t(20 * TAO),
-                AlphaBalance::MAX
-            ),
-            Error::<Test>::ShortPositionLimit
-        );
-
-        // Closing one frees a slot; the count is decremented and reusable.
+        // Closing one decrements the count; the slot is reusable.
         let pos = ShortPositions::<Test>::get(netuid, a).unwrap();
         give_alpha(U256::from(11), a, netuid, pos.q_liability);
         assert_ok!(SubtensorModule::close_short(
@@ -2635,9 +2622,9 @@ fn long_top_up_adds_buffer_and_resets_grace() {
     });
 }
 
-// Long merge must target the same hotkey; long position cap is enforced.
+// Long merge must target the same hotkey.
 #[test]
-fn long_merge_mismatch_and_position_cap() {
+fn long_merge_mismatch() {
     new_test_ext(1).execute_with(|| {
         let netuid = setup_long(1000 * TAO, 1000 * TAO, 1.0);
         let a = U256::from(10);
@@ -2660,21 +2647,6 @@ fn long_merge_mismatch_and_position_cap() {
                 TaoBalance::MAX
             ),
             Error::<Test>::LongHotkeyMismatch
-        );
-
-        // Position cap: with max=1, a second distinct coldkey is rejected.
-        SubtensorModule::set_long_max_positions(1);
-        let b = U256::from(20);
-        give_alpha(U256::from(21), b, netuid, AlphaBalance::from(100 * TAO));
-        assert_noop!(
-            SubtensorModule::open_long(
-                RuntimeOrigin::signed(b),
-                U256::from(21),
-                netuid,
-                AlphaBalance::from(20 * TAO),
-                TaoBalance::MAX
-            ),
-            Error::<Test>::LongPositionLimit
         );
     });
 }

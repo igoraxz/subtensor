@@ -1238,8 +1238,8 @@ mod dispatches {
 		// unwind in do_dissolve_network); charge the benchmarked linear settlement
 		// weight at the actual per-subnet position counts. Root-only extrinsic.
 		// Linearity is benchmarked over [0,1024]; counts above that extrapolate the
-		// per-position slope (scaled, not under-charged) — regen if Short/LongMaxPositions
-		// is ever set above 1024.
+		// per-position slope (scaled, not under-charged) — regen if subnets routinely
+		// carry more than 1024 positions.
 		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::ShortPositionCount::<T>::get(netuid)))
 		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::LongPositionCount::<T>::get(netuid))))]
         pub fn dissolve_network(
@@ -2157,8 +2157,8 @@ mod dispatches {
 		// unwind in do_dissolve_network); charge the benchmarked linear settlement
 		// weight at the actual per-subnet position counts. Root-only extrinsic.
 		// Linearity is benchmarked over [0,1024]; counts above that extrapolate the
-		// per-position slope (scaled, not under-charged) — regen if Short/LongMaxPositions
-		// is ever set above 1024.
+		// per-position slope (scaled, not under-charged) — regen if subnets routinely
+		// carry more than 1024 positions.
 		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::ShortPositionCount::<T>::get(netuid)))
 		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::LongPositionCount::<T>::get(netuid))))]
         pub fn root_dissolve_network(origin: OriginFor<T>, netuid: NetUid) -> DispatchResult {
