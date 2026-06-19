@@ -2270,8 +2270,11 @@ mod pallet_benchmarks {
         SubnetAlphaIn::<T>::insert(netuid, AlphaBalance::from(100_000_000_000_000_000u64));
         SubnetAlphaOut::<T>::insert(netuid, AlphaBalance::from(100_000_000_000_000_000u64));
         SubnetMovingPrice::<T>::insert(netuid, I96F32::from_num(0.01));
+        // Fund the per-subnet pool account so pool→custody transfers at open
+        // succeed. Kept modest (1000 TAO) so the multi-subnet decay benchmark
+        // loop (up to 64 subnets) does not exhaust the mint path.
         if let Some(sa) = Subtensor::<T>::get_subnet_account_id(netuid) {
-            add_balance_to_coldkey_account::<T>(&sa, TaoBalance::from(1_000_000_000_000_000u64));
+            add_balance_to_coldkey_account::<T>(&sa, TaoBalance::from(1_000_000_000_000u64));
         }
     }
 
