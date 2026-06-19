@@ -1229,7 +1229,7 @@ mod dispatches {
         }
 
         /// Remove a user's subnetwork
-        /// The caller must be the owner of the network
+        /// The caller must be root.
         #[pallet::call_index(61)]
         #[pallet::weight(Weight::from_parts(119_000_000, 0)
 		.saturating_add(T::DbWeight::get().reads(6))
@@ -1237,6 +1237,9 @@ mod dispatches {
 		// Terminal derivative settlement (O(positions/subnet), like the alpha-stake
 		// unwind in do_dissolve_network); charge the benchmarked linear settlement
 		// weight at the actual per-subnet position counts. Root-only extrinsic.
+		// Linearity is benchmarked over [0,1024]; counts above that extrapolate the
+		// per-position slope (scaled, not under-charged) — regen if Short/LongMaxPositions
+		// is ever set above 1024.
 		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::ShortPositionCount::<T>::get(netuid)))
 		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::LongPositionCount::<T>::get(netuid))))]
         pub fn dissolve_network(
@@ -2153,6 +2156,9 @@ mod dispatches {
 		// Terminal derivative settlement (O(positions/subnet), like the alpha-stake
 		// unwind in do_dissolve_network); charge the benchmarked linear settlement
 		// weight at the actual per-subnet position counts. Root-only extrinsic.
+		// Linearity is benchmarked over [0,1024]; counts above that extrapolate the
+		// per-position slope (scaled, not under-charged) — regen if Short/LongMaxPositions
+		// is ever set above 1024.
 		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::ShortPositionCount::<T>::get(netuid)))
 		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::LongPositionCount::<T>::get(netuid))))]
         pub fn root_dissolve_network(origin: OriginFor<T>, netuid: NetUid) -> DispatchResult {

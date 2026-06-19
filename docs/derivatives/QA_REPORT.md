@@ -140,11 +140,14 @@ state or governance configuration that can drift after merge.
 3. **High-price-subnet caveat.** Because `pEMA` is clamped around 1.0, the terminal
    anti-suppression guarantee is stated only for subnets priced below ~1.0 (true for
    all mainnet subnets today). Confirm this still holds at enablement.
-4. **Decay weight vs subnet count.** Decay `WeightInfo` is benchmarked over `[0,128]`
-   (= `DefaultSubnetLimit`). The hook conservatively charges `TotalNetworks` (≥ active
-   derivative subnets), so it slightly over-charges block weight by design. If the
-   subnet limit is ever raised above 128, regenerate the decay weights at the new
-   ceiling (or clamp/paginate the hook) first.
+4. **Benchmark validation boundaries.** Decay `WeightInfo` is benchmarked over
+   `[0,128]` (= `DefaultSubnetLimit`); `on_initialize` charges `run_*_decay(TotalNetworks)`
+   with the full count (linear, scaled — not under-charged — above 128, but only
+   *validated* to 128). Terminal settlement is benchmarked over `[0,1024]` and the
+   dissolve extrinsics charge `settle_*_on_dereg(actual position count)`; counts above
+   1024 (i.e. `Short/LongMaxPositions > 1024`) extrapolate the per-position slope.
+   If the subnet limit is raised above 128, or `MaxPositions` above 1024, regenerate
+   the corresponding weights to re-validate linearity before doing so.
 5. **CI reference-hardware weight regen** (`--extrinsic '*'`) — wiring is in place.
 
 ### 7.2 Accepted tradeoffs (intentional, not blockers)
