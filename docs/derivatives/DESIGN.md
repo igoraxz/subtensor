@@ -41,6 +41,14 @@ they are not bugs:
    `K_D ≥ R`. Consequence: the §15.5 worked example (`K_EMA = 66` for `Q = 3900`) **no longer
    reproduces** for large `Q` — the realized CPMM cost is strictly higher. This strengthens the
    anti-extraction margin (§3.4) and must be folded into the spec's settlement formula and example.
+   **Semantics (explicit):** terminal `K_D` is *derivative-internal CPMM accounting*, **not** a
+   live fee/weight-aware spot-swap simulation. It uses the constant-product buyback
+   `⌈pay·amt/(recv−amt)⌉` against the frozen terminal reserves, ceiling-rounded so it **never
+   under-charges** relative to constant-product. On a fee/weighted live pool the actual spot
+   close-cost would be ≥ this (fees add cost), so the CPMM accounting is conservative for the
+   trader's recovery in the no-fee case and must be re-derived if terminal settlement is ever
+   routed through the real fee/weight-aware swap engine. It is also **split-neutral**: priced once
+   on the aggregate liability `Q_Σ` (resp. `D_Σ`) and allocated pro-rata, so `Σ K_i ≥ K(Q_Σ)`.
 2. **Restoration zap is a one-sided reserve credit, not the min-swap-plus-balanced-add** (spec
    §6.5/§6.6). Net CPMM effect is equivalent for a single full-range position; on a fee/weighted
    pool the two forms differ and the reconciliation is gated on the trading-games suite (§14.5).

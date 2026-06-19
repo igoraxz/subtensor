@@ -435,6 +435,20 @@ impl<T: Config> Pallet<T> {
 
         let positions: Vec<(T::AccountId, LongPosition<T::AccountId>)> =
             LongPositions::<T>::iter_prefix(netuid).collect();
+
+        // Split-neutral aggregate pricing (mirror of the short side, spec §10.1).
+        // The cover CPMM cost `⌈A·d/(T−d)⌉` is convex in `d`, so price the
+        // aggregate TAO liability `D_Σ` once against the frozen snapshot and
+        // allocate each position's cover pro-rata by `d_i` (ceiling). `Σ cover_i ≥
+        // cover_Σ`, so splitting a liability across coldkeys cannot reduce cover.
+        let d_sigma: u128 = positions
+            .iter()
+            .map(|(_, p)| u128::from(p.d_liability.to_u64()))
+            .sum();
+        let cover_sigma = u128::from(Self::buyback_cost_rao(a_snap, t_snap, d_sigma)).max(
+            u128::from(Self::buyback_cost_rao(a_snap, t_ema_snap, d_sigma)),
+        );
+
         for (coldkey, mut pos) in positions {
             Self::materialize_long(&mut pos, agg.omega);
             // Escrow rejoins the pool / terminal distribution.
@@ -449,14 +463,15 @@ impl<T: Config> Pallet<T> {
             let c_l_rao =
                 u128::from(pos.p_floor.to_u64()).saturating_add(u128::from(pos.r_stored.to_u64()));
             let d_rao = u128::from(pos.d_liability.to_u64());
-            // Priced against the frozen terminal snapshot (order-independent).
-            // Cold EMA (`pEMA==0`) needs no explicit floor here (unlike the short
-            // side): `t_ema_snap==0` lands in the `a_param ≤ q_param` branch of
-            // `buyback_cost_rao`, returning `u64::MAX`, so `cover_ema` saturates and
-            // `cover = c_l` ⇒ equity 0. A cold long can never refund pool-origin R.
-            let cover_live = u128::from(Self::buyback_cost_rao(a_snap, t_snap, d_rao));
-            let cover_ema = u128::from(Self::buyback_cost_rao(a_snap, t_ema_snap, d_rao));
-            let cover_rao = c_l_rao.min(cover_live.max(cover_ema));
+            // Split-neutral allocation: pro-rata share (ceiling) of the aggregate
+            // cover `cover_Σ` priced on `D_Σ` against the frozen snapshot. Cold EMA
+            // (`t_ema_snap==0`) saturates `cover_Σ` to u64::MAX ⇒ `cover = c_l` ⇒
+            // equity 0 (a cold long can never refund pool-origin R).
+            let cover_rao = c_l_rao.min(if d_sigma == 0 {
+                0
+            } else {
+                cover_sigma.saturating_mul(d_rao).div_ceil(d_sigma)
+            });
             let equity = AlphaBalance::from(
                 c_l_rao.saturating_sub(cover_rao).min(u128::from(u64::MAX)) as u64,
             );
@@ -499,7 +514,8 @@ impl<T: Config> Pallet<T> {
         LongMinInput::<T>::put(min_input);
     }
     pub fn set_long_max_positions(max: u32) {
-        LongMaxPositions::<T>::put(max);
+        // Clamp to the hard compile-time ceiling (see MAX_POSITIONS_CEILING).
+        LongMaxPositions::<T>::put(max.min(super::MAX_POSITIONS_CEILING));
     }
 
     // ---- read-only views (mirror of the short read layer) --------------
@@ -520,6 +536,12 @@ impl<T: Config> Pallet<T> {
         if !LongsEnabled::<T>::get() || SubnetMechanism::<T>::get(netuid) != 1 {
             return None;
         }
+        // Mirror the open-time non-user-specific rejections (cold EMA, below-min
+        // input); capacity + reserve-domain are checked below via the same solves.
+        if !(Self::get_moving_alpha_price(netuid) > 0) || position_input < LongMinInput::<T>::get()
+        {
+            return None;
+        }
         let agg = LongAggregate::<T>::get(netuid);
         let a_ref = Self::long_a_ref(netuid);
         let p = Self::alpha_f(position_input);
@@ -529,6 +551,12 @@ impl<T: Config> Pallet<T> {
             Self::alpha_f(agg.b_sigma),
             LongBaseLtv::<T>::get(),
         )?;
+        // Capacity cap `S_L + B_L ≤ κ_L·A_ref` (`LongCapacityExceeded` at open).
+        if Self::alpha_f(agg.b_sigma).saturating_add(LongBaseLtv::<T>::get().saturating_mul(c))
+            > LongKappa::<T>::get().saturating_mul(a_ref)
+        {
+            return None;
+        }
         let a_live = Self::alpha_f(SubnetAlphaIn::<T>::get(netuid));
         let t_live = Self::tao_f(SubnetTAO::<T>::get(netuid));
         let phi = Self::solve_phi(n, a_live)?;

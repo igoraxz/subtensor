@@ -956,14 +956,27 @@ fn terminal_settlement_order_independent() {
                     .min(u64::MAX as u128)
             }
         };
+        // Aggregate (split-neutral) pricing: K_Σ on the total liability, allocated
+        // pro-rata (ceiling). Order-independent because every position reads the
+        // same frozen snapshot + aggregate.
+        let q_sigma: u128 = traders
+            .iter()
+            .map(|tr| {
+                ShortPositions::<Test>::get(netuid, tr)
+                    .unwrap()
+                    .q_liability
+                    .to_u64() as u128
+            })
+            .sum();
+        let k_sigma = bb(t0, a0, q_sigma).max(bb(t_ema0, a0, q_sigma));
         let mut expected: Vec<u64> = vec![];
         let mut before: Vec<u64> = vec![];
         for tr in traders.iter() {
             let pos = ShortPositions::<Test>::get(netuid, tr).unwrap();
             let c = pos.p_floor.to_u64() as u128 + pos.r_stored.to_u64() as u128;
             let q = pos.q_liability.to_u64() as u128;
-            let k_d = bb(t0, a0, q).max(bb(t_ema0, a0, q));
-            expected.push(c.saturating_sub(k_d).min(u64::MAX as u128) as u64);
+            let k_i = k_sigma.saturating_mul(q).div_ceil(q_sigma);
+            expected.push(c.saturating_sub(k_i).min(u64::MAX as u128) as u64);
             before.push(bal(tr));
         }
 
@@ -1026,14 +1039,25 @@ fn long_terminal_settlement_order_independent() {
             SubtensorModule::get_stake_for_hotkey_and_coldkey_on_subnet(&hotkey, tr, netuid)
                 .to_u64()
         };
+        // Aggregate (split-neutral) cover: cover_Σ on the total D, allocated
+        // pro-rata (ceiling) — order-independent against the frozen snapshot.
+        let d_sigma: u128 = traders
+            .iter()
+            .map(|tr| {
+                LongPositions::<Test>::get(netuid, tr)
+                    .unwrap()
+                    .d_liability
+                    .to_u64() as u128
+            })
+            .sum();
+        let cover_sigma = bb(a0, t0, d_sigma).max(bb(a0, t_ema0, d_sigma));
         let mut expected: Vec<u64> = vec![];
         let mut before: Vec<u64> = vec![];
         for tr in traders.iter() {
             let pos = LongPositions::<Test>::get(netuid, tr).unwrap();
             let c_l = pos.p_floor.to_u64() as u128 + pos.r_stored.to_u64() as u128;
             let d = pos.d_liability.to_u64() as u128;
-            // cover = alpha to repay D tao = buyback_cost_rao(A, T, D); larger of live/EMA.
-            let cover = c_l.min(bb(a0, t0, d).max(bb(a0, t_ema0, d)));
+            let cover = c_l.min(cover_sigma.saturating_mul(d).div_ceil(d_sigma));
             expected.push(c_l.saturating_sub(cover).min(u64::MAX as u128) as u64);
             before.push(stake(tr));
         }
@@ -1049,6 +1073,117 @@ fn long_terminal_settlement_order_independent() {
         }
         assert!(expected[0] > 0, "expected in-the-money long equity");
         assert!(LongPositions::<Test>::iter_prefix(netuid).next().is_none());
+    });
+}
+
+// Split-neutrality (spec §10.1): terminal cover is priced ONCE on the aggregate
+// liability Q_Σ and allocated pro-rata, so wallet-splitting one liability across
+// many coldkeys cannot reduce total cover. Because the CPMM buyback is convex,
+// per-position pricing (the prior behavior) would give Σ K(q_i) < K(ΣQ); this
+// test asserts the realized total cover tracks K(Q_Σ), not the smaller per-position sum.
+#[test]
+fn terminal_settlement_split_neutral() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_market(2000 * TAO, 2000 * TAO, 1.0);
+        let hotkey = U256::from(11);
+        let traders = [
+            U256::from(41),
+            U256::from(42),
+            U256::from(43),
+            U256::from(44),
+            U256::from(45),
+        ];
+        for tr in traders.iter() {
+            add_balance_to_coldkey_account(tr, t(1000 * TAO));
+            assert_ok!(SubtensorModule::open_short(
+                RuntimeOrigin::signed(*tr),
+                hotkey,
+                netuid,
+                t(50 * TAO),
+                AlphaBalance::MAX
+            ));
+        }
+        let t0 = SubnetTAO::<Test>::get(netuid).to_u64() as u128;
+        let a0 = SubnetAlphaIn::<Test>::get(netuid).to_u64() as u128;
+        let pema = SubtensorModule::get_moving_alpha_price(netuid);
+        let t_ema0 = (I96F32::from_num(pema) * I96F32::from_num(a0)).to_num::<u128>();
+        let bb = |pay: u128, recv: u128, amt: u128| -> u128 {
+            if recv <= amt {
+                u64::MAX as u128
+            } else {
+                pay.saturating_mul(amt)
+                    .div_ceil(recv - amt)
+                    .min(u64::MAX as u128)
+            }
+        };
+        let mut q_sigma = 0u128;
+        let mut c_sigma = 0u128;
+        let mut k_single_sum = 0u128; // the convex per-position sum (buggy behavior)
+        let mut before = vec![];
+        for tr in traders.iter() {
+            let p = ShortPositions::<Test>::get(netuid, tr).unwrap();
+            let q = p.q_liability.to_u64() as u128;
+            q_sigma += q;
+            c_sigma += p.p_floor.to_u64() as u128 + p.r_stored.to_u64() as u128;
+            k_single_sum += bb(t0, a0, q).max(bb(t_ema0, a0, q));
+            before.push(bal(tr));
+        }
+        let k_agg = bb(t0, a0, q_sigma).max(bb(t_ema0, a0, q_sigma));
+        // Convexity must hold or the test is not discriminating.
+        assert!(
+            k_agg > k_single_sum,
+            "expected convex buyback: K(ΣQ) {k_agg} > Σ K(q_i) {k_single_sum}"
+        );
+
+        SubtensorModule::settle_shorts_on_dereg(netuid);
+
+        let equity_sum: u128 = traders
+            .iter()
+            .zip(before.iter())
+            .map(|(tr, b0)| (bal(tr) - b0) as u128)
+            .sum();
+        // cover = collateral − equity. Split-neutral ⇒ total cover ≈ K(Q_Σ),
+        // (ceiling allocation makes it ≥ K_agg by < #positions rao), and strictly
+        // MORE than the convex per-position sum a splitter would have paid.
+        let cover_sum = c_sigma - equity_sum;
+        assert!(
+            cover_sum >= k_agg && cover_sum <= k_agg + traders.len() as u128,
+            "total cover {cover_sum} must track aggregate K(ΣQ) {k_agg} (split-neutral)"
+        );
+        assert!(
+            cover_sum > k_single_sum,
+            "split-neutral cover {cover_sum} must exceed the convex per-position sum {k_single_sum}"
+        );
+    });
+}
+
+// #4: during EMA warmup a tiny pEMA makes T_ref = min(T_live, pEMA·A_live) tiny,
+// so the capacity cap κ·T_ref admits only negligible opens — the cold/near-cold
+// window is self-limiting even past the pEMA>0 guard.
+#[test]
+fn tiny_pema_caps_open_size() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_market(1000 * TAO, 1000 * TAO, 1.0);
+        // Near-cold EMA: set pEMA to a tiny positive value (passes the warm guard).
+        SubnetMovingPrice::<Test>::insert(netuid, I96F32::from_num(0.00001));
+        let trader = U256::from(10);
+        add_balance_to_coldkey_account(&trader, t(1000 * TAO));
+        // A normal 100-TAO open is rejected — the tiny T_ref drives λ_eff≤0 /
+        // capacity well before any meaningful size can open.
+        let r = SubtensorModule::open_short(
+            RuntimeOrigin::signed(trader),
+            U256::from(11),
+            netuid,
+            t(100 * TAO),
+            AlphaBalance::MAX,
+        );
+        assert!(
+            r == Err(Error::<Test>::EffectiveLtvNonPositive.into())
+                || r == Err(Error::<Test>::ShortCapacityExceeded.into())
+                || r == Err(Error::<Test>::RetainedProceedsNonPositive.into()),
+            "tiny pEMA must cap open size, got {r:?}"
+        );
+        assert!(ShortPositions::<Test>::get(netuid, trader).is_none());
     });
 }
 

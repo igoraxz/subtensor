@@ -203,6 +203,13 @@ impl<T: Config> Pallet<T> {
     /// * 'MechanismDoesNotExist': If the specified network does not exist.
     /// * 'NotSubnetOwner': If the caller does not own the specified subnet.
     ///
+    // Atomic: derivative terminal settlement (`settle_shorts/longs_on_dereg`)
+    // runs before the fallible `destroy_alpha_in_out_stakes` /
+    // `clear_protocol_liquidity` legs. Without a storage layer a failure in a
+    // later leg would leave derivative positions removed / equity paid / custody
+    // recycled while the subnet survives. `#[transactional]` rolls the whole
+    // dissolve back as a unit on any error.
+    #[frame_support::transactional]
     pub fn do_dissolve_network(netuid: NetUid) -> dispatch::DispatchResult {
         // --- The network exists?
         ensure!(

@@ -30,6 +30,12 @@ pub use types::*;
 
 /// 12s blocks → 7200 per day. Decay rates are pro-rated per block.
 const BLOCKS_PER_DAY: u64 = 7200;
+/// Hard compile-time ceiling on per-subnet open-position count, independent of
+/// the governance `Short/LongMaxPositions` value. Terminal dereg settlement and
+/// the (currently unmetered) per-block decay tick are O(positions-on-subnet);
+/// this bounds that work regardless of any governance setting until weights are
+/// benchmarked / settlement is paginated.
+pub const MAX_POSITIONS_CEILING: u32 = 1024;
 /// Bisection tolerance for fixed-point square roots.
 fn sqrt_eps() -> I64F64 {
     I64F64::from_num(0.000_000_001)
@@ -667,6 +673,24 @@ impl<T: Config> Pallet<T> {
 
         let positions: Vec<(T::AccountId, ShortPosition<T::AccountId>)> =
             ShortPositions::<T>::iter_prefix(netuid).collect();
+
+        // Split-neutral aggregate pricing (spec §10.1 anti-splitting). The CPMM
+        // buyback `K(q)=⌈T·q/(A−q)⌉` is CONVEX, so pricing each position
+        // independently would let a whale split one liability across many coldkeys
+        // to cut total terminal cover (`Σ K(q_i) < K(ΣQ)`). Instead price the
+        // buyback ONCE for the aggregate liability `Q_Σ` against the frozen
+        // snapshot, then allocate each position's cover pro-rata by `q_i` with
+        // ceiling rounding. Then `Σ k_i ≥ K_Σ` regardless of how the liability is
+        // split, so splitting never reduces total cover. `q_liability` is fixed
+        // (does not decay), so summing the pre-materialized positions is exact.
+        let q_sigma: u128 = positions
+            .iter()
+            .map(|(_, p)| u128::from(p.q_liability.to_u64()))
+            .sum();
+        let k_sigma = u128::from(Self::buyback_cost_rao(t_snap, a_snap, q_sigma)).max(u128::from(
+            Self::buyback_cost_rao(t_ema_snap, a_snap, q_sigma),
+        ));
+
         for (coldkey, mut pos) in positions {
             Self::materialize_short(&mut pos, agg.omega);
 
@@ -697,12 +721,16 @@ impl<T: Config> Pallet<T> {
             let c_rao =
                 u128::from(pos.p_floor.to_u64()).saturating_add(u128::from(pos.r_stored.to_u64()));
             let q_rao = u128::from(pos.q_liability.to_u64());
-            // Priced against the frozen terminal snapshot (order-independent):
-            // `K_spot` on the snapshot live reserves, `K_EMA` on the EMA-implied
-            // reserve `T_EMA = pEMA · A_live` captured at snapshot time.
-            let k_spot = u128::from(Self::buyback_cost_rao(t_snap, a_snap, q_rao));
-            let k_ema = u128::from(Self::buyback_cost_rao(t_ema_snap, a_snap, q_rao));
-            let mut k_d = k_spot.max(k_ema);
+            // Split-neutral allocation: this position's cover is its pro-rata
+            // share of the aggregate buyback `K_Σ` (ceiling-rounded). Order- and
+            // split-independent, and `Σ k_i ≥ K_Σ`, so neither storage order nor
+            // wallet-splitting changes total cover. `K_Σ` already folds the
+            // `max(K_spot, K_EMA)` slippage-aware legs against the frozen snapshot.
+            let mut k_d = if q_sigma == 0 {
+                0
+            } else {
+                k_sigma.saturating_mul(q_rao).div_ceil(q_sigma)
+            };
 
             // Cold-EMA guard. When `pEMA == 0` (fresh subnet, no trustworthy slow
             // price), the EMA leg is 0 and only the suppressible live leg governs —
@@ -823,7 +851,9 @@ impl<T: Config> Pallet<T> {
         ShortMinInput::<T>::put(min_input);
     }
     pub fn set_short_max_positions(max: u32) {
-        ShortMaxPositions::<T>::put(max);
+        // Clamp to the hard compile-time ceiling so governance cannot uncap
+        // dereg-settlement / decay work (see MAX_POSITIONS_CEILING).
+        ShortMaxPositions::<T>::put(max.min(MAX_POSITIONS_CEILING));
     }
 
     // ---- read-only quote (spec §1.2) -----------------------------------
@@ -834,11 +864,25 @@ impl<T: Config> Pallet<T> {
         if !ShortsEnabled::<T>::get() || SubnetMechanism::<T>::get(netuid) != 1 {
             return None;
         }
+        // Mirror the open-time non-user-specific rejection paths so the quote is
+        // unavailable exactly when an open would be rejected: cold EMA
+        // (`ColdEmaNotAllowed`) and below-minimum input (`AmountTooLow`). Capacity
+        // and the reserve-domain bound are checked below via the same solves.
+        if !(Self::get_moving_alpha_price(netuid) > 0) || position_input < ShortMinInput::<T>::get()
+        {
+            return None;
+        }
         let agg = ShortAggregate::<T>::get(netuid);
         let t_ref = Self::short_t_ref(netuid);
         let p = Self::tao_f(position_input);
         let (c, n) =
             Self::solve_collateral(p, t_ref, Self::tao_f(agg.b_sigma), ShortBaseLtv::<T>::get())?;
+        // Capacity cap `S + B ≤ κ·T_ref` (`ShortCapacityExceeded` at open).
+        if Self::tao_f(agg.b_sigma).saturating_add(ShortBaseLtv::<T>::get().saturating_mul(c))
+            > ShortKappa::<T>::get().saturating_mul(t_ref)
+        {
+            return None;
+        }
         let t_live = Self::tao_f(SubnetTAO::<T>::get(netuid));
         let a_live = Self::alpha_f(SubnetAlphaIn::<T>::get(netuid));
         let phi = Self::solve_phi(n, t_live)?;
