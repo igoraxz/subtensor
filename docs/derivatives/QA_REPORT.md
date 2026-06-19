@@ -155,10 +155,10 @@ state or governance configuration that can drift after merge.
    corresponding weights to re-validate linearity. `[0,1024]` is a benchmark calibration
    range, **not** a consensus-enforced cap — terminal settlement is an immediate
    enumerate-and-settle sweep (see DESIGN.md §3.4), modelled on native alpha liquidation.
-5. **CI reference-hardware weight regen** (`--extrinsic '*'`) — wiring is in place. Note:
-   `open_short`/`open_long` still carry an auto-generated `Short/LongMaxPositions` storage-read
-   annotation in `weights.rs` from before the cap was removed; this over-charges one DB read
-   (safe direction) and is cleared by this regen.
+5. **CI reference-hardware weight regen** (`--extrinsic '*'`) — wiring is in place. The
+   `open_short`/`open_long` weights were regenerated locally after the cap removal (the stale
+   `Short/LongMaxPositions` storage-read annotation is gone); the final constants still need a
+   run on CI reference hardware before enablement.
 6. **Dereg weight/latency monitoring** — on a mainnet-seeded localnet, exercise
    `dissolve_network` against subnets carrying high synthetic short/long position counts and
    record settlement weight + wall-clock, confirming the immediate sweep stays within block

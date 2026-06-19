@@ -2399,24 +2399,22 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Proof: `SubtensorModule::ShortKappa` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::ShortPositions` (r:1 w:1)
 	/// Proof: `SubtensorModule::ShortPositions` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::ShortPositionCount` (r:1 w:1)
-	/// Proof: `SubtensorModule::ShortPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::ShortMaxPositions` (r:1 w:0)
-	/// Proof: `SubtensorModule::ShortMaxPositions` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `System::Account` (r:3 w:3)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(104), added: 2579, mode: `MaxEncodedLen`)
 	/// Storage: `SubtensorModule::TotalStake` (r:1 w:1)
 	/// Proof: `SubtensorModule::TotalStake` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
+	/// Storage: `SubtensorModule::ShortPositionCount` (r:1 w:1)
+	/// Proof: `SubtensorModule::ShortPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::ShortActiveSubnets` (r:0 w:1)
 	/// Proof: `SubtensorModule::ShortActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	fn open_short() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1272`
+		//  Measured:  `1210`
 		//  Estimated: `8727`
-		// Minimum execution time: 144_000_000 picoseconds.
-		Weight::from_parts(147_000_000, 0)
+		// Minimum execution time: 141_000_000 picoseconds.
+		Weight::from_parts(141_000_000, 0)
 			.saturating_add(Weight::from_parts(0, 8727))
-			.saturating_add(T::DbWeight::get().reads(17))
+			.saturating_add(T::DbWeight::get().reads(16))
 			.saturating_add(T::DbWeight::get().writes(9))
 	}
 	/// Storage: `SubtensorModule::ShortPositions` (r:1 w:1)
@@ -2533,10 +2531,6 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Proof: `SubtensorModule::LongKappa` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::LongPositions` (r:1 w:1)
 	/// Proof: `SubtensorModule::LongPositions` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::LongPositionCount` (r:1 w:1)
-	/// Proof: `SubtensorModule::LongPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::LongMaxPositions` (r:1 w:0)
-	/// Proof: `SubtensorModule::LongMaxPositions` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::Alpha` (r:1 w:0)
 	/// Proof: `SubtensorModule::Alpha` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::AlphaV2` (r:1 w:1)
@@ -2553,16 +2547,18 @@ impl<T: frame_system::Config> WeightInfo for SubstrateWeight<T> {
 	/// Proof: `SubtensorModule::Lock` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::SubnetAlphaOut` (r:1 w:1)
 	/// Proof: `SubtensorModule::SubnetAlphaOut` (`max_values`: None, `max_size`: None, mode: `Measured`)
+	/// Storage: `SubtensorModule::LongPositionCount` (r:1 w:1)
+	/// Proof: `SubtensorModule::LongPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::LongActiveSubnets` (r:0 w:1)
 	/// Proof: `SubtensorModule::LongActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	fn open_long() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `1762`
 		//  Estimated: `5227`
-		// Minimum execution time: 171_000_000 picoseconds.
-		Weight::from_parts(173_000_000, 0)
+		// Minimum execution time: 167_000_000 picoseconds.
+		Weight::from_parts(169_000_000, 0)
 			.saturating_add(Weight::from_parts(0, 5227))
-			.saturating_add(T::DbWeight::get().reads(21))
+			.saturating_add(T::DbWeight::get().reads(20))
 			.saturating_add(T::DbWeight::get().writes(9))
 	}
 	/// Storage: `SubtensorModule::LongPositions` (r:1 w:1)
@@ -5099,24 +5095,22 @@ impl WeightInfo for () {
 	/// Proof: `SubtensorModule::ShortKappa` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::ShortPositions` (r:1 w:1)
 	/// Proof: `SubtensorModule::ShortPositions` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::ShortPositionCount` (r:1 w:1)
-	/// Proof: `SubtensorModule::ShortPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::ShortMaxPositions` (r:1 w:0)
-	/// Proof: `SubtensorModule::ShortMaxPositions` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `System::Account` (r:3 w:3)
 	/// Proof: `System::Account` (`max_values`: None, `max_size`: Some(104), added: 2579, mode: `MaxEncodedLen`)
 	/// Storage: `SubtensorModule::TotalStake` (r:1 w:1)
 	/// Proof: `SubtensorModule::TotalStake` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
+	/// Storage: `SubtensorModule::ShortPositionCount` (r:1 w:1)
+	/// Proof: `SubtensorModule::ShortPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::ShortActiveSubnets` (r:0 w:1)
 	/// Proof: `SubtensorModule::ShortActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	fn open_short() -> Weight {
 		// Proof Size summary in bytes:
-		//  Measured:  `1272`
+		//  Measured:  `1210`
 		//  Estimated: `8727`
-		// Minimum execution time: 144_000_000 picoseconds.
-		Weight::from_parts(147_000_000, 0)
+		// Minimum execution time: 141_000_000 picoseconds.
+		Weight::from_parts(141_000_000, 0)
 			.saturating_add(Weight::from_parts(0, 8727))
-			.saturating_add(RocksDbWeight::get().reads(17))
+			.saturating_add(RocksDbWeight::get().reads(16))
 			.saturating_add(RocksDbWeight::get().writes(9))
 	}
 	/// Storage: `SubtensorModule::ShortPositions` (r:1 w:1)
@@ -5233,10 +5227,6 @@ impl WeightInfo for () {
 	/// Proof: `SubtensorModule::LongKappa` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::LongPositions` (r:1 w:1)
 	/// Proof: `SubtensorModule::LongPositions` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::LongPositionCount` (r:1 w:1)
-	/// Proof: `SubtensorModule::LongPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
-	/// Storage: `SubtensorModule::LongMaxPositions` (r:1 w:0)
-	/// Proof: `SubtensorModule::LongMaxPositions` (`max_values`: Some(1), `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::Alpha` (r:1 w:0)
 	/// Proof: `SubtensorModule::Alpha` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::AlphaV2` (r:1 w:1)
@@ -5253,16 +5243,18 @@ impl WeightInfo for () {
 	/// Proof: `SubtensorModule::Lock` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::SubnetAlphaOut` (r:1 w:1)
 	/// Proof: `SubtensorModule::SubnetAlphaOut` (`max_values`: None, `max_size`: None, mode: `Measured`)
+	/// Storage: `SubtensorModule::LongPositionCount` (r:1 w:1)
+	/// Proof: `SubtensorModule::LongPositionCount` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	/// Storage: `SubtensorModule::LongActiveSubnets` (r:0 w:1)
 	/// Proof: `SubtensorModule::LongActiveSubnets` (`max_values`: None, `max_size`: None, mode: `Measured`)
 	fn open_long() -> Weight {
 		// Proof Size summary in bytes:
 		//  Measured:  `1762`
 		//  Estimated: `5227`
-		// Minimum execution time: 171_000_000 picoseconds.
-		Weight::from_parts(173_000_000, 0)
+		// Minimum execution time: 167_000_000 picoseconds.
+		Weight::from_parts(169_000_000, 0)
 			.saturating_add(Weight::from_parts(0, 5227))
-			.saturating_add(RocksDbWeight::get().reads(21))
+			.saturating_add(RocksDbWeight::get().reads(20))
 			.saturating_add(RocksDbWeight::get().writes(9))
 	}
 	/// Storage: `SubtensorModule::LongPositions` (r:1 w:1)
