@@ -695,12 +695,21 @@ impl<T: Config> Pallet<T> {
             Self::materialize_short(&mut pos, agg.omega);
 
             // Escrow returns to the pool (joins terminal distribution). Credit
-            // reserves only on a successful transfer.
-            if !pos.e_stored.is_zero()
-                && Self::transfer_tao(&custody, &subnet_account, pos.e_stored.into()).is_ok()
-            {
-                Self::increase_provided_tao_reserve(netuid, pos.e_stored);
-                TotalStake::<T>::mutate(|t| *t = t.saturating_add(pos.e_stored));
+            // reserves only on a successful transfer. The transfer cannot fail
+            // under the custody-≥-obligations invariant; if it ever does, log
+            // loudly (rather than silently) — the un-transferred escrow stays in
+            // custody and is reclaimed by the terminal sweep below, so accounting
+            // is preserved, but a failure means the invariant was violated.
+            if !pos.e_stored.is_zero() {
+                if Self::transfer_tao(&custody, &subnet_account, pos.e_stored.into()).is_ok() {
+                    Self::increase_provided_tao_reserve(netuid, pos.e_stored);
+                    TotalStake::<T>::mutate(|t| *t = t.saturating_add(pos.e_stored));
+                } else {
+                    log::error!(
+                        "derivatives: short terminal escrow restore failed (custody invariant breach) netuid={netuid:?} e={:?}",
+                        pos.e_stored
+                    );
+                }
             }
 
             // K_D(Q) = max(K_spot,last, K_EMA), both slippage-aware (spec §11.4, §13.6).
@@ -749,11 +758,19 @@ impl<T: Config> Pallet<T> {
             // Pay equity; if the transfer fails the amount stays in custody and is
             // recycled by the terminal sweep below, so the emitted `equity` reflects
             // what was actually paid (never claims an unpaid amount).
-            let paid = if !equity.is_zero()
-                && Self::transfer_tao(&custody, &coldkey, equity.into()).is_ok()
-            {
+            // Pay equity from custody. `paid` (emitted in the event) reflects what
+            // actually moved — never an unpaid amount. A transfer failure is
+            // impossible under custody ≥ obligations; if it ever occurs, log loudly
+            // rather than silently under-paying (the unpaid value stays in custody
+            // and is recycled by the terminal sweep, so no TAO is created/lost).
+            let paid = if equity.is_zero() {
+                TaoBalance::from(0)
+            } else if Self::transfer_tao(&custody, &coldkey, equity.into()).is_ok() {
                 equity
             } else {
+                log::error!(
+                    "derivatives: short terminal equity payout failed (custody invariant breach) netuid={netuid:?} equity={equity:?}"
+                );
                 TaoBalance::from(0)
             };
             Self::recycle_custody_tao(&custody, cover);

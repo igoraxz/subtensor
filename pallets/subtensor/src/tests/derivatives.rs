@@ -1187,6 +1187,58 @@ fn tiny_pema_caps_open_size() {
     });
 }
 
+// Atomicity: `do_dissolve_network` is `#[frame_support::transactional]` and runs
+// derivative terminal settlement BEFORE the fallible `destroy_alpha_in_out_stakes`
+// / `clear_protocol_liquidity` legs. If a later leg fails, the settlement must roll
+// back as a unit. This exercises that exact mechanism (`#[transactional]` ==
+// `with_storage_layer`) on the real settlement fn: settle inside the layer, then a
+// later step errors, and assert all derivative/custody/aggregate state is restored.
+#[test]
+fn dereg_settlement_rolls_back_on_later_failure() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_market(2000 * TAO, 2000 * TAO, 1.0);
+        let trader = U256::from(10);
+        let hotkey = U256::from(11);
+        add_balance_to_coldkey_account(&trader, t(1000 * TAO));
+        assert_ok!(SubtensorModule::open_short(
+            RuntimeOrigin::signed(trader),
+            hotkey,
+            netuid,
+            t(50 * TAO),
+            AlphaBalance::MAX
+        ));
+        assert!(ShortPositions::<Test>::get(netuid, trader).is_some());
+        let custody_before = custody_bal(netuid);
+        let q_before = ShortAggregate::<Test>::get(netuid).q_sigma;
+
+        // Model do_dissolve_network: settle, then a later fallible leg returns Err.
+        let r = frame_support::storage::with_storage_layer(|| -> sp_runtime::DispatchResult {
+            SubtensorModule::settle_shorts_on_dereg(netuid);
+            // Inside the layer the position is settled/removed...
+            assert!(ShortPositions::<Test>::get(netuid, trader).is_none());
+            // ...then a subsequent dissolve leg fails.
+            Err(Error::<Test>::SubnetNotExists.into())
+        });
+        assert!(r.is_err());
+
+        // The whole settlement rolled back: position, custody, and aggregate restored.
+        assert!(
+            ShortPositions::<Test>::get(netuid, trader).is_some(),
+            "position must survive a rolled-back dissolve"
+        );
+        assert_eq!(
+            custody_bal(netuid),
+            custody_before,
+            "custody must be restored"
+        );
+        assert_eq!(
+            ShortAggregate::<Test>::get(netuid).q_sigma,
+            q_before,
+            "aggregate must be restored"
+        );
+    });
+}
+
 #[test]
 fn dissolve_network_clears_shorts() {
     new_test_ext(1).execute_with(|| {

@@ -82,7 +82,7 @@ and that single fact drives most of the design decisions.
 
 | Spec assumption | Subtensor reality | Consequence |
 |---|---|---|
-| Pure `x·y=k` | **Balancer-weighted** pool (`pallet_subtensor_swap`), weights in `SwapBalancer`, default 0.5/0.5 (CPMM-like only at init) | Use spec closed-forms **only for quoting/sizing**; realize every pool-touching leg through the live fee+weight-aware engine (`SwapHandler::sim_swap` / `swap`). The spec explicitly allows this (§4.4, §14.6). |
+| Pure `x·y=k` | **Balancer-weighted** pool (`pallet_subtensor_swap`), weights in `SwapBalancer`, default 0.5/0.5 (CPMM-like only at init) | **Authoritative model (as implemented):** derivative lifecycle legs (open / close / restoration / terminal settlement) are realized as **one-sided protocol reserve mutations** using the spec's constant-product closed-forms — *not* fee/weight-aware `SwapHandler::swap` calls. Read-only quoting (`quote_*`, est-close-cost) may use `sim_swap`. Fee/weighted-pool divergence from the one-sided CPMM accounting is an **accepted launch approximation, gated by the trading-games suite** before any κ ramp; routing realization through the engine is a deferred option (§3.4, §14.6). |
 | User can remove/add liquidity | User LP is **deprecated** (`add_liquidity`/`remove_liquidity` → `Error::Deprecated`) | The "remove-and-sell-back" open and the restoration/settlement zaps are realized as **protocol reserve mutations**, not user LP ops. |
 | Reserves `T`, `A` | `SubnetTAO` (TAO, the quote reserve), `SubnetAlphaIn` (alpha pool reserve), `SubnetAlphaOut` (staked alpha outside the pool) | Short open/restore are mostly `SubnetTAO` mutations; close settlement touches `SubnetAlphaIn`. |
 | `pEMA` price reference | **Already exists**: `SubnetMovingPrice` (per-block halving EMA, TAO/alpha) | Reuse directly as the spec's `pEMA`. No new TWAP, no new price EMA. |
@@ -126,13 +126,17 @@ decay step, (d) ~4 extrinsics, (e) one runtime-API quote. Risk reserve EMAs are 
 
 ## 3. Reserve-accounting model (the load-bearing part)
 
-All pool impact is expressed as mutations to `SubnetTAO` / `SubnetAlphaIn`, executed through the
-existing helpers so weights and fees stay consistent:
+All pool impact is expressed as **one-sided reserve mutations** to `SubnetTAO` / `SubnetAlphaIn`
+using the spec constant-product closed-forms — **not** fee/weight-aware `SwapHandler::swap` calls:
 
 - `increase_provided_tao_reserve` / `decrease_provided_tao_reserve`
 - `increase_provided_alpha_reserve` / `decrease_provided_alpha_reserve`
-- `T::SwapInterface::sim_swap` / `swap` with `GetAlphaForTao<T>` / `GetTaoForAlpha<T>` for any
-  internal swap leg (fee + weight aware).
+- terminal cover is the constant-product buyback `⌈t·q/(a−q)⌉` (`buyback_cost_rao`, u128/ceiling).
+
+`T::SwapInterface::sim_swap` is used **only by the read-only quote layer** (`quote_*`,
+`est_close_cost`); no `swap` is executed on any lifecycle leg. This is the single authoritative
+model (see the reality-check table and §A.6); the fee/weighted-pool divergence from one-sided CPMM
+accounting is an accepted launch approximation gated by the trading-games suite.
 
 ### 3.1 Open short — net pool effect
 
@@ -146,9 +150,9 @@ held by protocol      = E (escrow) + N (becomes buffer R0)
 position liability     = Q = ϕ·A (alpha debt, virtual; alpha reserve untouched at open)
 ```
 
-`ϕ`, `N`, `Q`, `E` are first quoted from the spec closed-forms (Appendix A.1), then the realized
-TAO leg is taken from a fee-adjusted engine quote so the booked `N`/`E` match what the pool
-actually moved. The trader supplies `P = C − N` TAO, held against the floor and recycle-on-default.
+`ϕ`, `N`, `Q`, `E` are computed from the spec closed-forms (Appendix A.1); the realized TAO leg is a
+**one-sided reserve decrement** `SubnetTAO -= (N + E)` (the CPMM closed-form), not a fee-adjusted
+engine swap. The trader supplies `P = C − N` TAO, held against the floor and recycle-on-default.
 
 ### 3.2 Continuous restoration (per block) — net pool effect
 
@@ -168,8 +172,8 @@ via the engine then add the remainder — spec §6.6 — behind the same `restor
 ### 3.3 Close (partial fraction ρ, full = ρ=1) — net pool effect
 
 Trader repays `ρQ` alpha; protocol pairs it with the escrow slice `ρE` via the settlement zap
-(§8.5). Net pool effect: `SubnetAlphaIn += ρQ`, `SubnetTAO += ρ·E_remaining_share`, balanced
-through an engine min-swap. Trader receives `ρ(P + R)` back. Position `P, Q, R, E, B` reduced
+(§8.5), realized as **one-sided reserve increments**: `SubnetAlphaIn += ρQ`, `SubnetTAO += ρE`
+(not an engine min-swap). Trader receives `ρ(P + R)` back. Position `P, Q, R, E, B` reduced
 pro-rata; aggregates updated.
 
 ### 3.4 Default (R ≤ R_dust) and terminal dereg
