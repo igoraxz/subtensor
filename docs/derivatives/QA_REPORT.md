@@ -145,9 +145,11 @@ state or governance configuration that can drift after merge.
    with the full count (linear, scaled — not under-charged — above 128, but only
    *validated* to 128). Terminal settlement is benchmarked over `[0,1024]` and the
    dissolve extrinsics charge `settle_*_on_dereg(actual position count)`; counts above
-   1024 (i.e. `Short/LongMaxPositions > 1024`) extrapolate the per-position slope.
-   If the subnet limit is raised above 128, or `MaxPositions` above 1024, regenerate
-   the corresponding weights to re-validate linearity before doing so.
+   1024 extrapolate the per-position slope (scaled, not under-charged). There is no
+   per-subnet open-position cap (parity with the uncapped alpha-stake unwind); position
+   count is bounded only by the κ capacity limit and min-input. If the subnet count is
+   raised above 128, or subnets routinely carry more than 1024 positions, regenerate the
+   corresponding weights to re-validate linearity.
 5. **CI reference-hardware weight regen** (`--extrinsic '*'`) — wiring is in place.
 
 ### 7.2 Accepted tradeoffs (intentional, not blockers)
