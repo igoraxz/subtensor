@@ -2596,7 +2596,7 @@ mod dispatches {
 
         /// Open (or merge into) a covered short with floor input `position_input`.
         #[pallet::call_index(139)]
-        #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(12, 8))]
+        #[pallet::weight(<T as Config>::WeightInfo::open_short())]
         pub fn open_short(
             origin: OriginFor<T>,
             hotkey: T::AccountId,
@@ -2609,7 +2609,7 @@ mod dispatches {
 
         /// Top up a covered short's carry buffer with fresh capital.
         #[pallet::call_index(140)]
-        #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(5, 4))]
+        #[pallet::weight(<T as Config>::WeightInfo::top_up_short())]
         pub fn top_up_short(
             origin: OriginFor<T>,
             netuid: NetUid,
@@ -2620,7 +2620,7 @@ mod dispatches {
 
         /// Close `fraction_ppb / 1e9` of a covered short (`1e9` = full close).
         #[pallet::call_index(141)]
-        #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(10, 8))]
+        #[pallet::weight(<T as Config>::WeightInfo::close_short())]
         pub fn close_short(
             origin: OriginFor<T>,
             netuid: NetUid,
@@ -2631,7 +2631,7 @@ mod dispatches {
 
         /// Permissionlessly default a covered short whose buffer reached dust.
         #[pallet::call_index(142)]
-        #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(7, 6))]
+        #[pallet::weight(<T as Config>::WeightInfo::default_short())]
         pub fn default_short(
             origin: OriginFor<T>,
             coldkey: T::AccountId,
@@ -2642,7 +2642,7 @@ mod dispatches {
 
         /// Open (or merge into) a covered long with floor Alpha `position_input`.
         #[pallet::call_index(143)]
-        #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(12, 8))]
+        #[pallet::weight(<T as Config>::WeightInfo::open_long())]
         pub fn open_long(
             origin: OriginFor<T>,
             hotkey: T::AccountId,
@@ -2655,7 +2655,7 @@ mod dispatches {
 
         /// Top up a covered long's carry buffer with fresh Alpha.
         #[pallet::call_index(144)]
-        #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(5, 4))]
+        #[pallet::weight(<T as Config>::WeightInfo::top_up_long())]
         pub fn top_up_long(
             origin: OriginFor<T>,
             netuid: NetUid,
@@ -2666,7 +2666,7 @@ mod dispatches {
 
         /// Close `fraction_ppb / 1e9` of a covered long (`1e9` = full close).
         #[pallet::call_index(145)]
-        #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(10, 8))]
+        #[pallet::weight(<T as Config>::WeightInfo::close_long())]
         pub fn close_long(
             origin: OriginFor<T>,
             netuid: NetUid,
@@ -2677,7 +2677,7 @@ mod dispatches {
 
         /// Permissionlessly default a covered long whose buffer reached dust.
         #[pallet::call_index(146)]
-        #[pallet::weight(<T as frame_system::Config>::DbWeight::get().reads_writes(7, 6))]
+        #[pallet::weight(<T as Config>::WeightInfo::default_long())]
         pub fn default_long(
             origin: OriginFor<T>,
             coldkey: T::AccountId,
