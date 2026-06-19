@@ -514,8 +514,9 @@ impl<T: Config> Pallet<T> {
         LongMinInput::<T>::put(min_input);
     }
     pub fn set_long_max_positions(max: u32) {
-        // Clamp to the hard compile-time ceiling (see MAX_POSITIONS_CEILING).
-        LongMaxPositions::<T>::put(max.min(super::MAX_POSITIONS_CEILING));
+        // Governance-configured per-subnet open-position limit (enforced at open);
+        // no hard compile-time ceiling (parity with the short side / alpha unwind).
+        LongMaxPositions::<T>::put(max);
     }
 
     // ---- read-only views (mirror of the short read layer) --------------

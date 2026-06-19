@@ -30,12 +30,6 @@ pub use types::*;
 
 /// 12s blocks → 7200 per day. Decay rates are pro-rated per block.
 const BLOCKS_PER_DAY: u64 = 7200;
-/// Hard compile-time ceiling on per-subnet open-position count, independent of
-/// the governance `Short/LongMaxPositions` value. Terminal dereg settlement and
-/// the (currently unmetered) per-block decay tick are O(positions-on-subnet);
-/// this bounds that work regardless of any governance setting until weights are
-/// benchmarked / settlement is paginated.
-pub const MAX_POSITIONS_CEILING: u32 = 1024;
 /// Bisection tolerance for fixed-point square roots.
 fn sqrt_eps() -> I64F64 {
     I64F64::from_num(0.000_000_001)
@@ -868,9 +862,11 @@ impl<T: Config> Pallet<T> {
         ShortMinInput::<T>::put(min_input);
     }
     pub fn set_short_max_positions(max: u32) {
-        // Clamp to the hard compile-time ceiling so governance cannot uncap
-        // dereg-settlement / decay work (see MAX_POSITIONS_CEILING).
-        ShortMaxPositions::<T>::put(max.min(MAX_POSITIONS_CEILING));
+        // Governance-configured per-subnet open-position limit (enforced at open).
+        // No hard compile-time ceiling: terminal dereg settlement is O(positions)
+        // like the existing alpha-stake unwind, and the dissolve extrinsic charges
+        // the benchmarked settlement weight at the actual position count.
+        ShortMaxPositions::<T>::put(max);
     }
 
     // ---- read-only quote (spec §1.2) -----------------------------------

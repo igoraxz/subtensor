@@ -19,8 +19,15 @@ mod hooks {
 
             let block_step_result = Self::block_step();
             // Account the per-block derivative decay hooks (run_short/long_decay,
-            // invoked inside block_step). Cost is O(active derivative subnets);
-            // bound conservatively by the total subnet count.
+            // invoked inside block_step). Cost is O(active derivative subnets) via
+            // the per-subnet aggregate + Ω index (NOT per-position); bound by the
+            // total subnet count.
+            //
+            // OPERATIONAL INVARIANT: the decay WeightInfo is benchmarked over the
+            // component range [0, 128] (the current DefaultSubnetLimit). If the
+            // subnet count is ever raised above 128, the decay weights must be
+            // regenerated at the new ceiling (or this hook must clamp/paginate)
+            // before that limit is lifted.
             let n = TotalNetworks::<T>::get() as u32;
             let decay_weight = <T as Config>::WeightInfo::run_short_decay(n)
                 .saturating_add(<T as Config>::WeightInfo::run_long_decay(n));

@@ -1234,10 +1234,11 @@ mod dispatches {
         #[pallet::weight(Weight::from_parts(119_000_000, 0)
 		.saturating_add(T::DbWeight::get().reads(6))
 		.saturating_add(T::DbWeight::get().writes(31))
-		// Terminal derivative settlement (O(positions/subnet)); charge the worst
-		// case at the hard position ceiling so the dispatch weight bounds it.
-		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::derivatives::MAX_POSITIONS_CEILING))
-		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::derivatives::MAX_POSITIONS_CEILING)))]
+		// Terminal derivative settlement (O(positions/subnet), like the alpha-stake
+		// unwind in do_dissolve_network); charge the benchmarked linear settlement
+		// weight at the actual per-subnet position counts. Root-only extrinsic.
+		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::ShortPositionCount::<T>::get(netuid)))
+		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::LongPositionCount::<T>::get(netuid))))]
         pub fn dissolve_network(
             origin: OriginFor<T>,
             _coldkey: T::AccountId,
@@ -2149,10 +2150,11 @@ mod dispatches {
         #[pallet::weight(Weight::from_parts(119_000_000, 0)
 		.saturating_add(T::DbWeight::get().reads(6))
 		.saturating_add(T::DbWeight::get().writes(31))
-		// Terminal derivative settlement (O(positions/subnet)); charge the worst
-		// case at the hard position ceiling so the dispatch weight bounds it.
-		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::derivatives::MAX_POSITIONS_CEILING))
-		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::derivatives::MAX_POSITIONS_CEILING)))]
+		// Terminal derivative settlement (O(positions/subnet), like the alpha-stake
+		// unwind in do_dissolve_network); charge the benchmarked linear settlement
+		// weight at the actual per-subnet position counts. Root-only extrinsic.
+		.saturating_add(<T as Config>::WeightInfo::settle_shorts_on_dereg(crate::ShortPositionCount::<T>::get(netuid)))
+		.saturating_add(<T as Config>::WeightInfo::settle_longs_on_dereg(crate::LongPositionCount::<T>::get(netuid))))]
         pub fn root_dissolve_network(origin: OriginFor<T>, netuid: NetUid) -> DispatchResult {
             ensure_root(origin)?;
             Self::do_dissolve_network(netuid)
