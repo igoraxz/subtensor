@@ -21,6 +21,13 @@ is what makes the terminal anti-attack margin work and is therefore a **governan
 invariant** — see §3.4. If upstream ever redefines the moving-price clamp or half-life, the
 derivative risk math must be re-validated.
 
+**Warm-EMA open guard.** `do_open_short`/`do_open_long` reject (`ColdEmaNotAllowed`) when
+`pEMA == 0` (freshly registered subnet, no price history), since there the EMA risk reference
+falls back to the live reserve and the terminal `K_EMA` anti-suppression leg is unavailable.
+Positions can only be opened once the EMA warms; a position opened warm that later goes cold is
+still bounded at settlement by the cold-EMA `K_D ≥ R` floor (short) / `u64::MAX` cover sentinel
+(long).
+
 **Spec upgrades required (intended deviations from v3.6.1 text).** The implementation deliberately
 diverges from three literal spec formulas. In every case the divergence is toward a *more
 conservative* realization against the live AMM that never under-charges an attacker. These are
@@ -42,6 +49,21 @@ they are not bugs:
 
 Action: upgrade the v3.6.1 spec text (settlement formula §11.4/A.6, the §15.5 example, and the zap
 definitions §6.6/§8.5) so the authoritative document matches the conservative implementation.
+
+**Fee-pool divergence (consequence of the one-sided reserve ops).** Because open/close/restore/
+terminal zaps are one-sided reserve mutations rather than fee-charging swap-engine calls, on a
+**fee-charging** pool the derivative's realized close-cost, break-even, and terminal economics do
+**not** include the pool swap fee. This is acceptable for the launch design (the math is priced and
+realized one-sidedly), but it means quoted break-even ≠ the cost of an equivalent fee-paying spot
+swap. If a future variant routes derivative legs through the fee-adjusted swap engine, break-even /
+terminal quotes must be re-derived. Tracked as a pre-mainnet decision alongside the κ ramp.
+
+**Close is in-kind only (UX note).** `close_short` requires the trader to already hold/stake the
+Alpha liability `Q` on the position hotkey (`SubnetAlphaOut ≥ ρQ`), and `close_long` requires the
+TAO liability `D`. There is **no auto-buy close path** in the launch design: a trader without the
+liability asset must acquire/stake it first (the protocol liability `Q`/`D` is the same regardless,
+but the incremental market close cost can be lower if the trader already holds the asset — spec §1.6).
+This is intentional and safe; clients must surface "you need `Q` Alpha (`D` TAO) to close".
 
 ---
 

@@ -75,14 +75,26 @@ impl<T: Config> Pallet<T> {
         // Never recycle (and never reduce issuance by) more than is actually
         // held: caps an `Exact` withdraw failure that would desync issuance.
         let amt = Self::get_coldkey_balance(custody).min(amount.into());
-        TotalIssuance::<T>::mutate(|ti| *ti = ti.saturating_sub(amt));
-        let _ = <T as Config>::Currency::withdraw(
+        if amt.is_zero() {
+            return;
+        }
+        // Withdraw first; reduce issuance only after the funds are confirmed
+        // removed, so a (capped, Force) withdraw shortfall can never desync
+        // TotalIssuance. (Canonical `recycle_tao` reduces-then-withdraws but
+        // propagates the error via `?` for transactional rollback; this helper
+        // returns `()` and runs in the non-transactional dereg sweep, so it
+        // checks the withdraw result inline instead.)
+        if <T as Config>::Currency::withdraw(
             custody,
             amt,
             Precision::Exact,
             Preservation::Expendable,
             Fortitude::Force,
-        );
+        )
+        .is_ok()
+        {
+            TotalIssuance::<T>::mutate(|ti| *ti = ti.saturating_sub(amt));
+        }
     }
 
     // ---- references (spec §3, §4) --------------------------------------
@@ -267,6 +279,16 @@ impl<T: Config> Pallet<T> {
         ensure!(
             SubnetMechanism::<T>::get(netuid) == 1,
             Error::<T>::SubnetNotDynamic
+        );
+        // Warm-EMA guard: a cold `pEMA` (freshly registered subnet, no price
+        // history) makes `short_t_ref` fall back to the live reserve and the
+        // terminal `K_EMA` anti-suppression leg unavailable, so opens are blocked
+        // until the EMA warms. (Profit on a cold-EMA dereg is already floored by
+        // the cold-EMA `K_D ≥ R` guard and subnet immunity; this also removes the
+        // griefing-pressure surface on fresh subnets.)
+        ensure!(
+            Self::get_moving_alpha_price(netuid) > 0,
+            Error::<T>::ColdEmaNotAllowed
         );
         ensure!(
             position_input >= ShortMinInput::<T>::get(),
@@ -628,6 +650,21 @@ impl<T: Config> Pallet<T> {
             None => return,
         };
 
+        // Terminal settlement snapshot (spec §11.1): every position's K_D is
+        // priced against ONE frozen reserve reference captured before any
+        // per-position escrow restoration, so per-position equity is independent
+        // of settlement (storage/key) order. The escrow restorations in the loop
+        // move real TAO into the pool for terminal distribution but are NOT
+        // admitted into this pricing snapshot — otherwise a position settled
+        // later would be priced against the escrow already restored by earlier
+        // positions (order-dependent, unfair, grindable by coldkey hash).
+        let a_snap = u128::from(SubnetAlphaIn::<T>::get(netuid).to_u64());
+        let t_snap = u128::from(SubnetTAO::<T>::get(netuid).to_u64());
+        let t_ema_snap = pema
+            .saturating_mul(Self::alpha_f(SubnetAlphaIn::<T>::get(netuid)))
+            .max(I64F64::from_num(0))
+            .saturating_to_num::<u128>();
+
         let positions: Vec<(T::AccountId, ShortPosition<T::AccountId>)> =
             ShortPositions::<T>::iter_prefix(netuid).collect();
         for (coldkey, mut pos) in positions {
@@ -660,15 +697,11 @@ impl<T: Config> Pallet<T> {
             let c_rao =
                 u128::from(pos.p_floor.to_u64()).saturating_add(u128::from(pos.r_stored.to_u64()));
             let q_rao = u128::from(pos.q_liability.to_u64());
-            let a_rao = u128::from(SubnetAlphaIn::<T>::get(netuid).to_u64());
-            let t_rao = u128::from(SubnetTAO::<T>::get(netuid).to_u64());
-            // EMA-implied TAO reserve at the slow price: `T_EMA = pEMA · A_live`.
-            let t_ema_rao = pema
-                .saturating_mul(Self::alpha_f(SubnetAlphaIn::<T>::get(netuid)))
-                .max(I64F64::from_num(0))
-                .saturating_to_num::<u128>();
-            let k_spot = u128::from(Self::buyback_cost_rao(t_rao, a_rao, q_rao));
-            let k_ema = u128::from(Self::buyback_cost_rao(t_ema_rao, a_rao, q_rao));
+            // Priced against the frozen terminal snapshot (order-independent):
+            // `K_spot` on the snapshot live reserves, `K_EMA` on the EMA-implied
+            // reserve `T_EMA = pEMA · A_live` captured at snapshot time.
+            let k_spot = u128::from(Self::buyback_cost_rao(t_snap, a_snap, q_rao));
+            let k_ema = u128::from(Self::buyback_cost_rao(t_ema_snap, a_snap, q_rao));
             let mut k_d = k_spot.max(k_ema);
 
             // Cold-EMA guard. When `pEMA == 0` (fresh subnet, no trustworthy slow

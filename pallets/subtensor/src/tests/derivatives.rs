@@ -390,10 +390,13 @@ fn low_liquidity_rejects_oversized_open() {
     });
 }
 
+// Warm-EMA guard: opening on a cold-`pEMA` (freshly registered, no price
+// history) subnet is rejected, since the EMA risk reference and terminal
+// anti-suppression leg are unavailable there. Opens are admitted only once the
+// EMA warms.
 #[test]
-fn small_open_on_fresh_subnet_with_cold_ema() {
+fn open_rejected_on_cold_ema_subnet() {
     new_test_ext(1).execute_with(|| {
-        // No price EMA set (cold start): T_ref falls back to live reserve.
         let owner_c = U256::from(1);
         let owner_h = U256::from(2);
         let netuid = add_dynamic_network(&owner_h, &owner_c);
@@ -406,6 +409,20 @@ fn small_open_on_fresh_subnet_with_cold_ema() {
 
         let trader = U256::from(10);
         add_balance_to_coldkey_account(&trader, t(1000 * TAO));
+        assert_noop!(
+            SubtensorModule::open_short(
+                RuntimeOrigin::signed(trader),
+                U256::from(11),
+                netuid,
+                t(50 * TAO),
+                AlphaBalance::MAX
+            ),
+            Error::<Test>::ColdEmaNotAllowed
+        );
+        assert!(ShortPositions::<Test>::get(netuid, trader).is_none());
+
+        // Once the EMA warms, the same open is admitted.
+        SubnetMovingPrice::<Test>::insert(netuid, I96F32::from_num(1.0));
         assert_ok!(SubtensorModule::open_short(
             RuntimeOrigin::signed(trader),
             U256::from(11),
@@ -890,6 +907,148 @@ fn dereg_cold_ema_caps_equity_at_floor() {
             "cold-EMA equity {gained} must not exceed floor {p_floor}"
         );
         assert_eq!(custody_bal(netuid), 0);
+    });
+}
+
+// Regression for the order-dependence fix: every position's terminal K_D is
+// priced against ONE frozen pre-settlement reserve snapshot, so per-position
+// equity does not depend on settlement (coldkey storage) order. Here we settle
+// several positions and assert each paid equity equals the value computed
+// against the snapshot captured before any escrow restoration. Pre-fix, later
+// positions saw earlier positions' escrow already restored into SubnetTAO and
+// were mispriced.
+#[test]
+fn terminal_settlement_order_independent() {
+    new_test_ext(1).execute_with(|| {
+        // price = 1.0 ⇒ pEMA warm; equal reserves ⇒ K_spot == K_EMA.
+        let netuid = setup_market(2000 * TAO, 2000 * TAO, 1.0);
+        let hotkey = U256::from(11);
+        let traders = [
+            U256::from(21),
+            U256::from(22),
+            U256::from(23),
+            U256::from(24),
+        ];
+        for tr in traders.iter() {
+            add_balance_to_coldkey_account(tr, t(1000 * TAO));
+            assert_ok!(SubtensorModule::open_short(
+                RuntimeOrigin::signed(*tr),
+                hotkey,
+                netuid,
+                t(50 * TAO),
+                AlphaBalance::MAX
+            ));
+        }
+
+        // Frozen snapshot, captured before settlement (no decay tick has run, so
+        // stored position values are the materialized values).
+        let t0 = SubnetTAO::<Test>::get(netuid).to_u64() as u128;
+        let a0 = SubnetAlphaIn::<Test>::get(netuid).to_u64() as u128;
+        let pema = SubtensorModule::get_moving_alpha_price(netuid);
+        let t_ema0 = (I96F32::from_num(pema) * I96F32::from_num(a0)).to_num::<u128>();
+        // Byte-exact mirror of `buyback_cost_rao` (mod.rs), incl. the u64::MAX clamp.
+        let bb = |pay: u128, recv: u128, amt: u128| -> u128 {
+            if recv <= amt {
+                u64::MAX as u128
+            } else {
+                pay.saturating_mul(amt)
+                    .div_ceil(recv - amt)
+                    .min(u64::MAX as u128)
+            }
+        };
+        let mut expected: Vec<u64> = vec![];
+        let mut before: Vec<u64> = vec![];
+        for tr in traders.iter() {
+            let pos = ShortPositions::<Test>::get(netuid, tr).unwrap();
+            let c = pos.p_floor.to_u64() as u128 + pos.r_stored.to_u64() as u128;
+            let q = pos.q_liability.to_u64() as u128;
+            let k_d = bb(t0, a0, q).max(bb(t_ema0, a0, q));
+            expected.push(c.saturating_sub(k_d).min(u64::MAX as u128) as u64);
+            before.push(bal(tr));
+        }
+
+        SubtensorModule::settle_shorts_on_dereg(netuid);
+
+        for (i, tr) in traders.iter().enumerate() {
+            let paid = bal(tr) - before[i];
+            assert_eq!(
+                paid, expected[i],
+                "position {i} mispriced vs frozen snapshot (order-dependent settlement)"
+            );
+        }
+        assert!(
+            expected[0] > 0,
+            "expected in-the-money equity to make the test meaningful"
+        );
+        assert!(ShortPositions::<Test>::iter_prefix(netuid).next().is_none());
+    });
+}
+
+// Long-side mirror of the order-independence regression: every long position's
+// terminal cover is priced against the same frozen pre-settlement snapshot, so
+// per-position equity (minted as stake) is independent of settlement order.
+#[test]
+fn long_terminal_settlement_order_independent() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_long(2000 * TAO, 2000 * TAO, 1.0);
+        let hotkey = U256::from(11);
+        let traders = [
+            U256::from(31),
+            U256::from(32),
+            U256::from(33),
+            U256::from(34),
+        ];
+        for tr in traders.iter() {
+            give_alpha(hotkey, *tr, netuid, AlphaBalance::from(500 * TAO));
+            assert_ok!(SubtensorModule::open_long(
+                RuntimeOrigin::signed(*tr),
+                hotkey,
+                netuid,
+                AlphaBalance::from(50 * TAO),
+                TaoBalance::MAX
+            ));
+        }
+
+        let a0 = SubnetAlphaIn::<Test>::get(netuid).to_u64() as u128;
+        let t0 = SubnetTAO::<Test>::get(netuid).to_u64() as u128;
+        let pema = SubtensorModule::get_moving_alpha_price(netuid);
+        let t_ema0 = (I96F32::from_num(pema) * I96F32::from_num(a0)).to_num::<u128>();
+        let bb = |pay: u128, recv: u128, amt: u128| -> u128 {
+            if recv <= amt {
+                u64::MAX as u128
+            } else {
+                pay.saturating_mul(amt)
+                    .div_ceil(recv - amt)
+                    .min(u64::MAX as u128)
+            }
+        };
+        let stake = |tr: &U256| -> u64 {
+            SubtensorModule::get_stake_for_hotkey_and_coldkey_on_subnet(&hotkey, tr, netuid)
+                .to_u64()
+        };
+        let mut expected: Vec<u64> = vec![];
+        let mut before: Vec<u64> = vec![];
+        for tr in traders.iter() {
+            let pos = LongPositions::<Test>::get(netuid, tr).unwrap();
+            let c_l = pos.p_floor.to_u64() as u128 + pos.r_stored.to_u64() as u128;
+            let d = pos.d_liability.to_u64() as u128;
+            // cover = alpha to repay D tao = buyback_cost_rao(A, T, D); larger of live/EMA.
+            let cover = c_l.min(bb(a0, t0, d).max(bb(a0, t_ema0, d)));
+            expected.push(c_l.saturating_sub(cover).min(u64::MAX as u128) as u64);
+            before.push(stake(tr));
+        }
+
+        SubtensorModule::settle_longs_on_dereg(netuid);
+
+        for (i, tr) in traders.iter().enumerate() {
+            let minted = stake(tr) - before[i];
+            assert_eq!(
+                minted, expected[i],
+                "long position {i} mispriced vs frozen snapshot (order-dependent settlement)"
+            );
+        }
+        assert!(expected[0] > 0, "expected in-the-money long equity");
+        assert!(LongPositions::<Test>::iter_prefix(netuid).next().is_none());
     });
 }
 

@@ -337,5 +337,10 @@ mod errors {
         LongHotkeyMismatch,
         /// Trader does not hold enough alpha collateral to open/extend the long.
         InsufficientCollateral,
+        /// Derivative open requires a warm price EMA (`pEMA > 0`). The subnet's
+        /// moving price is still cold (freshly registered / no price history),
+        /// where the EMA risk reference and terminal anti-suppression leg are
+        /// unavailable, so opens are blocked until the EMA warms.
+        ColdEmaNotAllowed,
     }
 }

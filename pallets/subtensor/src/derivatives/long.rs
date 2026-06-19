@@ -87,6 +87,13 @@ impl<T: Config> Pallet<T> {
             SubnetMechanism::<T>::get(netuid) == 1,
             Error::<T>::SubnetNotDynamic
         );
+        // Warm-EMA guard (mirror of the short side): block opens on a cold-`pEMA`
+        // subnet where the EMA risk reference / terminal anti-suppression leg are
+        // unavailable.
+        ensure!(
+            Self::get_moving_alpha_price(netuid) > 0,
+            Error::<T>::ColdEmaNotAllowed
+        );
         ensure!(
             position_input >= LongMinInput::<T>::get(),
             Error::<T>::AmountTooLow
@@ -415,6 +422,17 @@ impl<T: Config> Pallet<T> {
     pub fn settle_longs_on_dereg(netuid: NetUid) {
         let agg = LongAggregate::<T>::get(netuid);
         let price = I64F64::from_num(Self::get_moving_alpha_price(netuid));
+        // Terminal settlement snapshot (spec §11.1): price every position's
+        // cover against ONE frozen reserve reference captured before any
+        // per-position escrow restoration, so per-position equity is independent
+        // of settlement (storage/key) order — mirror of the short-side fix.
+        let a_snap = u128::from(SubnetAlphaIn::<T>::get(netuid).to_u64());
+        let t_snap = u128::from(SubnetTAO::<T>::get(netuid).to_u64());
+        let t_ema_snap = price
+            .saturating_mul(Self::alpha_f(SubnetAlphaIn::<T>::get(netuid)))
+            .max(I64F64::from_num(0))
+            .saturating_to_num::<u128>();
+
         let positions: Vec<(T::AccountId, LongPosition<T::AccountId>)> =
             LongPositions::<T>::iter_prefix(netuid).collect();
         for (coldkey, mut pos) in positions {
@@ -431,18 +449,13 @@ impl<T: Config> Pallet<T> {
             let c_l_rao =
                 u128::from(pos.p_floor.to_u64()).saturating_add(u128::from(pos.r_stored.to_u64()));
             let d_rao = u128::from(pos.d_liability.to_u64());
-            let a_live = u128::from(SubnetAlphaIn::<T>::get(netuid).to_u64());
-            let t_live = u128::from(SubnetTAO::<T>::get(netuid).to_u64());
-            let t_ema = price
-                .saturating_mul(Self::alpha_f(SubnetAlphaIn::<T>::get(netuid)))
-                .max(I64F64::from_num(0))
-                .saturating_to_num::<u128>();
+            // Priced against the frozen terminal snapshot (order-independent).
             // Cold EMA (`pEMA==0`) needs no explicit floor here (unlike the short
-            // side): `t_ema==0` lands in the `a_param ≤ q_param` branch of
+            // side): `t_ema_snap==0` lands in the `a_param ≤ q_param` branch of
             // `buyback_cost_rao`, returning `u64::MAX`, so `cover_ema` saturates and
             // `cover = c_l` ⇒ equity 0. A cold long can never refund pool-origin R.
-            let cover_live = u128::from(Self::buyback_cost_rao(a_live, t_live, d_rao));
-            let cover_ema = u128::from(Self::buyback_cost_rao(a_live, t_ema, d_rao));
+            let cover_live = u128::from(Self::buyback_cost_rao(a_snap, t_snap, d_rao));
+            let cover_ema = u128::from(Self::buyback_cost_rao(a_snap, t_ema_snap, d_rao));
             let cover_rao = c_l_rao.min(cover_live.max(cover_ema));
             let equity = AlphaBalance::from(
                 c_l_rao.saturating_sub(cover_rao).min(u128::from(u64::MAX)) as u64,
