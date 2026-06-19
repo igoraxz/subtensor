@@ -15,8 +15,6 @@ use safe_math::FixedExt;
 use substrate_fixed::types::I64F64;
 use subtensor_runtime_common::Token;
 
-const BLOCKS_PER_DAY: u64 = 7200;
-
 impl<T: Config> Pallet<T> {
     /// Conservative Alpha reference `A_ref = min(A_live, A_EMA)`, with
     /// `A_EMA = T_live / pEMA` reconstructed from the price EMA. Cold EMA falls
@@ -386,7 +384,7 @@ impl<T: Config> Pallet<T> {
                 continue;
             }
             let delta = Self::long_daily_decay(netuid, agg.b_sigma)
-                .safe_div(I64F64::from_num(BLOCKS_PER_DAY));
+                .safe_div(I64F64::from_num(super::BLOCKS_PER_DAY));
             if delta <= I64F64::from_num(0) {
                 continue;
             }
@@ -400,6 +398,11 @@ impl<T: Config> Pallet<T> {
             LongAggregate::<T>::insert(netuid, agg);
 
             // Restoration: mint decayed R+E Alpha back into the pool reserve.
+            // Unlike the short path (which transfers real TAO from custody and so
+            // must restore-then-commit to keep custody >= obligations on a failed
+            // leg), Alpha restoration is an infallible issuance-accounting mint, so
+            // committing the decayed aggregate first is safe — there is no transfer
+            // that can fail and leave Omega advanced ahead of restored value.
             Self::increase_provided_alpha_reserve(netuid, dr.saturating_add(de));
         }
     }
@@ -540,8 +543,8 @@ impl<T: Config> Pallet<T> {
         if r_current <= dust || dust.is_zero() {
             return if r_current <= dust { 0 } else { u64::MAX };
         }
-        let delta =
-            Self::long_daily_decay(netuid, b_sigma).safe_div(I64F64::from_num(BLOCKS_PER_DAY));
+        let delta = Self::long_daily_decay(netuid, b_sigma)
+            .safe_div(I64F64::from_num(super::BLOCKS_PER_DAY));
         if delta <= I64F64::from_num(0) {
             return u64::MAX;
         }

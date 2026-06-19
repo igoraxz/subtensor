@@ -1357,6 +1357,77 @@ fn open_quote_gated_by_enable_flag() {
     });
 }
 
+// Long-side mirror of L2: the long open quote is unavailable while longs are disabled.
+#[test]
+fn long_open_quote_gated_by_enable_flag() {
+    new_test_ext(1).execute_with(|| {
+        let netuid = setup_long(1000 * TAO, 1000 * TAO, 1.0);
+        assert!(SubtensorModule::quote_open_long(netuid, AlphaBalance::from(100 * TAO)).is_some());
+        SubtensorModule::set_longs_enabled(false);
+        assert!(SubtensorModule::quote_open_long(netuid, AlphaBalance::from(100 * TAO)).is_none());
+    });
+}
+
+// The caller execution bound is an opt-out: `*::MAX` accepts any realized liability
+// (so a normal open never reverts on slippage), while a tight bound rejects. Asserts
+// both directions in one scenario for both sides.
+#[test]
+fn open_max_liability_bound_opts_out() {
+    new_test_ext(1).execute_with(|| {
+        // SHORT: MAX opts out (opens), 1-rao bound rejects.
+        let netuid = setup_market(1000 * TAO, 1000 * TAO, 1.0);
+        let trader = U256::from(10);
+        add_balance_to_coldkey_account(&trader, t(1000 * TAO));
+        assert_ok!(SubtensorModule::open_short(
+            RuntimeOrigin::signed(trader),
+            U256::from(11),
+            netuid,
+            t(50 * TAO),
+            AlphaBalance::MAX
+        ));
+        assert!(ShortPositions::<Test>::get(netuid, trader).is_some());
+        let trader2 = U256::from(20);
+        add_balance_to_coldkey_account(&trader2, t(1000 * TAO));
+        assert_noop!(
+            SubtensorModule::open_short(
+                RuntimeOrigin::signed(trader2),
+                U256::from(21),
+                netuid,
+                t(50 * TAO),
+                AlphaBalance::from(1)
+            ),
+            Error::<Test>::SlippageTooHigh
+        );
+
+        // LONG: MAX opts out (opens), 1-rao bound rejects.
+        let lnet = setup_long(1000 * TAO, 1000 * TAO, 1.0);
+        let lt = U256::from(30);
+        let lhot = U256::from(31);
+        give_alpha(lhot, lt, lnet, AlphaBalance::from(500 * TAO));
+        assert_ok!(SubtensorModule::open_long(
+            RuntimeOrigin::signed(lt),
+            lhot,
+            lnet,
+            AlphaBalance::from(100 * TAO),
+            TaoBalance::MAX
+        ));
+        assert!(LongPositions::<Test>::get(lnet, lt).is_some());
+        let lt2 = U256::from(40);
+        let lhot2 = U256::from(41);
+        give_alpha(lhot2, lt2, lnet, AlphaBalance::from(500 * TAO));
+        assert_noop!(
+            SubtensorModule::open_long(
+                RuntimeOrigin::signed(lt2),
+                lhot2,
+                lnet,
+                AlphaBalance::from(100 * TAO),
+                TaoBalance::from(1)
+            ),
+            Error::<Test>::SlippageTooHigh
+        );
+    });
+}
+
 // Fix (M4): per-subnet open-position count is capped and maintained, bounding
 // deregistration-settlement work.
 #[test]
